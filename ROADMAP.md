@@ -1,8 +1,9 @@
-# mlip-disorder-inference — Development Roadmap
+# mlip-quantum-thermal — Development Roadmap
 
-*Last updated: 2026-07-23. Self-contained: the Python pipeline computes and
-`viewer/` displays. Renamed from `rmc-mlip-phonons` and detached from
-`rmc-phonon-dynamics` on 2026-07-23; see README "Scope pivot".*
+*Last updated: 2026-07-26. Self-contained: the Python pipeline computes and
+`viewer/` displays. Renamed to `mlip-quantum-thermal` on 2026-07-26 (final;
+see CLAUDE.md) and detached from `rmc-phonon-dynamics` on 2026-07-23; see
+README "Scope pivot".*
 
 ---
 

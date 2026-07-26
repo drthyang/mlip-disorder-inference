@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 ### Changed
+- **Renamed to `mlip-quantum-thermal` (2026-07-26) — final.** Third name in
+  four days, and the churn had a cause: both prior names encoded the
+  *statistical method of the moment* (`-dynamic-refinement`, then
+  `-disorder-inference`), so each method change argued for a rename. This one
+  names the **physics the repo generates** — an MLIP-driven quantum-thermal
+  ensemble, zero-point included — which is invariant under the pivot: the
+  ensemble stays the null model whether evidence arrives via RMC statistics or
+  forward S(Q,E) closure. It is also earned rather than aspirational:
+  `md_run.quantum_snapshots` samples ⟨u²⟩ ∝ (ħ/2ω)coth(ħω/2k_BT) as the default
+  path, classical Langevin NVT is the explicitly demoted cross-check that warns
+  below 100 K, and `test_zero_point_dominates_at_low_T` guards the statistics.
+  Secondary benefit: *inference* collided with the ML sense of the word (a
+  forward pass of the potential), which in an MLIP repo read as a serving
+  runtime rather than a scattering-analysis pipeline. CLAUDE.md now carries the
+  name as a hard boundary so a future method change does not reopen it. Also
+  fixed drift the previous rename missed: `viewer/package-lock.json` still
+  carried `mlip-dynamic-refinement-viewer`, out of sync with `package.json`.
+  The milestone-3 package target is now `mlip_quantum_thermal/`.
 - **Renamed `rmc-mlip-phonons` → `mlip-dynamic-refinement` →
   `mlip-disorder-inference` (2026-07-23/24).** GitHub redirects both old URLs.
   The original name described inputs (RMC) + engine (MLIP) + output (phonons).

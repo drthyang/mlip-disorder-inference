@@ -6,7 +6,7 @@ import ModeInspector from './components/ModeInspector.jsx';
 import InsPanel from './components/InsPanel.jsx';
 
 /**
- * Mode viewer for the mlip-disorder-inference pipeline.
+ * Mode viewer for the mlip-quantum-thermal pipeline.
  *
  * Input is any phonopy-standard band yaml this repo emits — band.yaml
  * (harmonic), band_T.yaml (quantum-sampled effective FCs), band_rmc.yaml
@@ -121,7 +121,7 @@ export default function App() {
         <div className="flex flex-col">
           <span className="text-[15px] font-semibold tracking-tight">Mode Viewer</span>
           <span className="text-[11px]" style={{ color: 'var(--faint)' }}>
-            mlip-disorder-inference
+            mlip-quantum-thermal
           </span>
         </div>
         <div className="flex-1" />

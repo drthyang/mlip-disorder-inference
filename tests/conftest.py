@@ -1,4 +1,4 @@
-"""Shared pytest fixtures and helpers for the mlip-disorder-inference test suite.
+"""Shared pytest fixtures and helpers for the mlip-quantum-thermal test suite.
 
 Makes the standalone milestone scripts importable (they live at the repo root,
 not in a package yet — see CLAUDE.md "refactor into a package only at

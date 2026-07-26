@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """milestone1_bands.py — correct phonon bands from an RMC ensemble via a foundation MLIP.
 
-Pipeline (milestone 1 of the mlip-disorder-inference project):
+Pipeline (milestone 1 of the mlip-quantum-thermal project):
 
     .rmc6f ensemble  ->  fold + circular-average to one unit cell
                      ->  (optional) spglib symmetrization

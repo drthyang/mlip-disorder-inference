@@ -1,4 +1,4 @@
-# mlip-disorder-inference
+# mlip-quantum-thermal
 
 Deciding how much of the disorder seen in total-scattering and spectroscopy
 data is **frozen** and how much is **motion** — by generating the thermal

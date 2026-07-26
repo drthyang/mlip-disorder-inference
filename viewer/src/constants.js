@@ -7,10 +7,9 @@
 // ── Atomic masses [amu] — phonopy's default mass table ──────────────────────
 // Copied from src_gpu/constants.py ATOMIC_MASS. These are 2011-era IUPAC
 // values (e.g. Se 78.96, Mo 95.96), NOT the 2021 revision — kept deliberately
-// identical to phonopy's structure/atomic_data.py so masses agree with
-// phonopy-produced band.yaml files (interchange contract with
-// rmc-mlip-phonons). 2011↔2021 differences shift frequencies by ≤7e-5
-// relative — negligible.
+// identical to phonopy's structure/atomic_data.py so masses agree with the
+// phonopy-produced band.yaml files this pipeline emits. 2011↔2021 differences
+// shift frequencies by ≤7e-5 relative — negligible.
 export const ATOMIC_MASS = {
   "H": 1.008, "He": 4.0026, "Li": 6.94, "Be": 9.0122, "B": 10.81, "C": 12.011, "N": 14.007,
   "O": 15.999, "F": 18.998, "Ne": 20.180, "Na": 22.990, "Mg": 24.305, "Al": 26.982, "Si": 28.085,

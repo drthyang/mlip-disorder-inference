@@ -1,4 +1,4 @@
-# mlip-disorder-inference — milestone 1
+# mlip-quantum-thermal — milestone 1
 numpy
 ase>=3.23
 spglib>=2.0

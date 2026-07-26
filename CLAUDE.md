@@ -1,4 +1,4 @@
-# CLAUDE.md — mlip-disorder-inference
+# CLAUDE.md — mlip-quantum-thermal
 
 ## What this project is
 
@@ -12,7 +12,7 @@ pseudo-inverse Gram (`mode_project.py`), two explicit null models
 (`random_signs`, `shuffle_cells`), variance decomposition into a measured
 noise fraction, bootstrap confidence, and threshold classification
 (`verdicts.py`). Fitting (hiPhive force constants, scale+offset closure) is a
-subroutine, not the thesis — hence *inference*, not *refinement*, in the name.
+subroutine, not the thesis.
 
 **Scope pivot (2026-07-23, in progress.)** RMC is being demoted from inference
 engine to screening tool: evidence should come from forward closure against
@@ -29,6 +29,16 @@ amplitudes.
 
 ## Hard boundaries — do not violate
 
+- **The name is settled: `mlip-quantum-thermal`.** It names the physics the
+  repo generates — an MLIP-driven quantum-thermal ensemble, zero-point
+  included — not the statistical method applied on top. The method has already
+  changed twice (refinement → inference → forward closure) and will change
+  again; that is **not** a reason to rename. Earned, not aspirational:
+  `md_run.quantum_snapshots` samples ⟨u²⟩ ∝ (ħ/2ω)coth(ħω/2k_BT) as the
+  default path, classical Langevin is the demoted cross-check, and
+  `test_zero_point_dominates_at_low_T` guards it. Prior names
+  (`rmc-mlip-phonons`, `mlip-dynamic-refinement`, `mlip-disorder-inference`)
+  are dead; GitHub redirects them.
 - **The Python pipeline never depends on `viewer/`.** Every milestone must run
   start to finish without node installed. `viewer/` reads the pipeline's
   output files; nothing flows back.
@@ -90,7 +100,8 @@ ionic compound.
 
 - Python ≥ 3.11, type hints on public functions, numpy-style docstrings.
 - Pure functions + a thin argparse CLI. Milestone scripts stay runnable
-  standalone; refactor into a `rmc_mlip_phonons/` package only at milestone 3.
+  standalone; refactor into a `mlip_quantum_thermal/` package only at
+  milestone 3.
 - Every physics routine gets a synthetic-data unit test (follow the
   wrap-around circular-mean pattern).
 - Keep `ROADMAP.md` checkboxes and `CHANGELOG.md` current — update both at the
