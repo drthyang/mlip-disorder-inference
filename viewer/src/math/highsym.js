@@ -1,4 +1,4 @@
-// web/src/math/highsym.js
+// viewer/src/math/highsym.js
 //
 // Standard high-symmetry points (Setyawan & Curtarolo, Comp. Mat. Sci. 49
 // (2010) 299 — the convention seekpath also uses) in the PRIMITIVE reciprocal

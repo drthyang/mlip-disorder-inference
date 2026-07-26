@@ -1,4 +1,4 @@
-// web/src/math/dos.js
+// viewer/src/math/dos.js
 //
 // Phonon density of states from a flat list of mode energies (meV) sampled over
 // a uniform q-grid: Gaussian-broadened histogram, normalized to unit area.

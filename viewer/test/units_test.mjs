@@ -1,6 +1,6 @@
-// web/test/units_test.mjs
+// viewer/test/units_test.mjs
 //
-// Units contract with phonopy / rmc-mlip-phonons:
+// Units convention shared with phonopy:
 //   * phonopy band.yaml `frequency` is THz (default factor sqrt(eV/amu)/Å/2π)
 //     → the viewer model stores meV, so loading converts ×4.1356677 by default;
 //   * a `frequency_unit:` key overrides the default (our exporter writes THz

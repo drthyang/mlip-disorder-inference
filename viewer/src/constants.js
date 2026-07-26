@@ -1,4 +1,4 @@
-// web/src/constants.js
+// viewer/src/constants.js
 //
 // Physical constants and element tables for the RMC phonon pipeline.
 // Mirrors src_gpu/constants.py and viz/sqeworker.js so the browser results

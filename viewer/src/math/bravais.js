@@ -1,4 +1,4 @@
-// web/src/math/bravais.js
+// viewer/src/math/bravais.js
 //
 // Determine the Bravais lattice (crystal system + centering) of an RMC dataset
 // the way seekpath/spglib does for the k-path tool: detect centering from the

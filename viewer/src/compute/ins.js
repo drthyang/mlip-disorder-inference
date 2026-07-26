@@ -1,4 +1,4 @@
-// web/src/compute/ins.js
+// viewer/src/compute/ins.js
 //
 // Build a compact, transferable representation of the phonon results for the
 // S(Q,E)/DOS worker.

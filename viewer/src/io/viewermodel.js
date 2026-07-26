@@ -1,4 +1,4 @@
-// web/src/io/viewermodel.js
+// viewer/src/io/viewermodel.js
 //
 // A single "viewer model" feeds the Viewer page, whether the data came from an
 // in-memory runner result or a loaded band.yaml/.json. It is always a UNIT-CELL

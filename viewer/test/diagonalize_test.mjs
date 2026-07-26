@@ -1,4 +1,4 @@
-// web/test/diagonalize_test.mjs
+// viewer/test/diagonalize_test.mjs
 //
 // Eigenvector correctness of the complex-Hermitian eigh under DEGENERACY.
 //

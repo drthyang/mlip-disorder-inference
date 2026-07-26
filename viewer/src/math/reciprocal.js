@@ -1,4 +1,4 @@
-// web/src/math/reciprocal.js
+// viewer/src/math/reciprocal.js
 //
 // Lattice-aware reciprocal cell + high-symmetry k-path generation.
 //

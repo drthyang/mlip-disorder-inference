@@ -1,4 +1,4 @@
-// web/test/viewermodel_test.mjs
+// viewer/test/viewermodel_test.mjs
 //
 // Proves the vibration mode is assigned to the CORRECT atom through the whole
 // chain: pipeline results -> viewer model -> (the 3D viewer's row lookup) and

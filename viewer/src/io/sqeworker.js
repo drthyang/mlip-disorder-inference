@@ -1,4 +1,4 @@
-// web/src/io/sqeworker.js
+// viewer/src/io/sqeworker.js
 //
 // Off-main-thread simulated INS: powder S(|Q|,E) and phonon DOS.
 // Ported from viz/sqeworker.js. Operates on compact transferred typed arrays

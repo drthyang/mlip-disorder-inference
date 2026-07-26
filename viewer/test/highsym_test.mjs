@@ -1,4 +1,4 @@
-// web/test/highsym_test.mjs
+// viewer/test/highsym_test.mjs
 //
 // Validates the Setyawan–Curtarolo high-symmetry tables for the variant lattices.
 // We can't compare labels to seekpath here, but every S-C point must lie ON or

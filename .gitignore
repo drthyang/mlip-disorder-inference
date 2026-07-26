@@ -1,4 +1,4 @@
-# --- mlip-dynamic-refinement ignores ---
+# --- mlip-quantum-thermal ignores ---
 
 # Ensembles, trajectories, results, model weights — never committed (see CLAUDE.md)
 data/

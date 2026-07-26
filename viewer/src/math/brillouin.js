@@ -1,4 +1,4 @@
-// web/src/math/brillouin.js
+// viewer/src/math/brillouin.js
 //
 // First Brillouin zone = Wigner-Seitz cell of the reciprocal lattice: the set of
 // points closer to the origin than to any other reciprocal lattice point. We

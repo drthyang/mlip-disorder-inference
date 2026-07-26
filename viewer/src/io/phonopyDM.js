@@ -1,4 +1,4 @@
-// web/src/io/phonopyDM.js
+// viewer/src/io/phonopyDM.js
 //
 // Reader for the phononwebsite / phonopy "dynamical-matrix" JSON export
 // (format "phonopy-dynamical-matrix-v1") — e.g. the per-material files from the

@@ -2,36 +2,12 @@
 
 ## [Unreleased]
 ### Changed
-- **Renamed to `mlip-quantum-thermal` (2026-07-26) — final.** Third name in
-  four days, and the churn had a cause: both prior names encoded the
-  *statistical method of the moment* (`-dynamic-refinement`, then
-  `-disorder-inference`), so each method change argued for a rename. This one
-  names the **physics the repo generates** — an MLIP-driven quantum-thermal
-  ensemble, zero-point included — which is invariant under the pivot: the
-  ensemble stays the null model whether evidence arrives via RMC statistics or
-  forward S(Q,E) closure. It is also earned rather than aspirational:
-  `md_run.quantum_snapshots` samples ⟨u²⟩ ∝ (ħ/2ω)coth(ħω/2k_BT) as the default
-  path, classical Langevin NVT is the explicitly demoted cross-check that warns
-  below 100 K, and `test_zero_point_dominates_at_low_T` guards the statistics.
-  Secondary benefit: *inference* collided with the ML sense of the word (a
-  forward pass of the potential), which in an MLIP repo read as a serving
-  runtime rather than a scattering-analysis pipeline. CLAUDE.md now carries the
-  name as a hard boundary so a future method change does not reopen it. Also
-  fixed drift the previous rename missed: `viewer/package-lock.json` still
-  carried `mlip-dynamic-refinement-viewer`, out of sync with `package.json`.
-  The milestone-3 package target is now `mlip_quantum_thermal/`.
-- **Renamed `rmc-mlip-phonons` → `mlip-dynamic-refinement` →
-  `mlip-disorder-inference` (2026-07-23/24).** GitHub redirects both old URLs.
-  The original name described inputs (RMC) + engine (MLIP) + output (phonons).
-  The intermediate one said *refinement*, which was wrong twice over: the
-  verdict machinery already in the repo is inference, not fitting —
-  `verdicts.py` is a variance decomposition, a ratio against a null and a
-  400-sample bootstrap; `mode_project.py` is a Hungarian assignment, a joint
-  least-squares projection through a pseudo-inverse Gram, and two null models
-  — and the forward S(Q,E) route the pivot heads toward is hypothesis testing
-  with no refinement loop in it at all. *Inference* also contains refinement
-  as the special case of point estimation, so the eventual dynamic-EPSR loop
-  still fits under the name. README and CLAUDE.md reframed to match.
+- **Renamed `rmc-mlip-phonons` → `mlip-quantum-thermal` (2026-07-26).** The
+  name describes the physics the repo generates — an MLIP quantum-thermal
+  ensemble used as the null model — rather than the statistical method layered
+  on top, which is what the two intermediate names did and why they churned.
+  GitHub redirects the old URLs. Milestone-3 package target is now
+  `mlip_quantum_thermal/`.
 - **Scope pivot: RMC demoted from inference engine to screening tool.**
   Total scattering is the energy integral of S(Q,E), so G(r)/S(Q) cannot by
   itself distinguish a frozen distortion (elastic) from a soft mode (peak at

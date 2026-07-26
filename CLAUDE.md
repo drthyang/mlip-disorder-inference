@@ -30,15 +30,8 @@ amplitudes.
 ## Hard boundaries — do not violate
 
 - **The name is settled: `mlip-quantum-thermal`.** It names the physics the
-  repo generates — an MLIP-driven quantum-thermal ensemble, zero-point
-  included — not the statistical method applied on top. The method has already
-  changed twice (refinement → inference → forward closure) and will change
-  again; that is **not** a reason to rename. Earned, not aspirational:
-  `md_run.quantum_snapshots` samples ⟨u²⟩ ∝ (ħ/2ω)coth(ħω/2k_BT) as the
-  default path, classical Langevin is the demoted cross-check, and
-  `test_zero_point_dominates_at_low_T` guards it. Prior names
-  (`rmc-mlip-phonons`, `mlip-dynamic-refinement`, `mlip-disorder-inference`)
-  are dead; GitHub redirects them.
+  repo generates, not the statistical method layered on top — so a change of
+  method is not a reason to rename it.
 - **The Python pipeline never depends on `viewer/`.** Every milestone must run
   start to finish without node installed. `viewer/` reads the pipeline's
   output files; nothing flows back.

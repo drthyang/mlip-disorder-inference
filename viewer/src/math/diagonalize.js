@@ -1,4 +1,4 @@
-// web/src/math/diagonalize.js
+// viewer/src/math/diagonalize.js
 import { Matrix, EigenvalueDecomposition } from 'ml-matrix';
 
 // ENERGY_CONV is imported by callers from ../constants.js and passed into
