@@ -39,14 +39,16 @@
   (1.5–5 Å), 0.348 (5–10), 0.397 (10–20). The largest residual is the
   null's single Ta–Ta peak at 3.0 Å against the measured 2.95/3.06 Å
   split; measured peaks are also broader at high Q.
-- **Rerun note: `--symprec 0.01` is required for the GTS fold.** The
-  requested command at the default 1e-3 crashes in phonopy's quantum
-  sampler (`RandomDisplacements._C_to_D` assertion): the 493-config fold
-  reads P1 at 1e-3 (so does the 986-file fold with the AVERAGE files), so
-  `symmetrize` leaves it off-symmetric while phonopy still finds F-4̄3m —
-  force constants inconsistent with the positions. The original M2 run must
-  have used a looser symprec, which closure.json did not record; it does
-  now.
+- **`md_run.py --symprec` default 1e-3 → 1e-2.** At 1e-3 the GTS command
+  crashed in phonopy's quantum sampler (`RandomDisplacements._C_to_D`
+  assertion): the 493-config fold reads P1 at 1e-3 (so does the 986-file
+  fold with the AVERAGE files), so `symmetrize` leaves it off-symmetric
+  while phonopy still finds F-4̄3m — force constants inconsistent with the
+  positions. The original M2 run must have used a looser symprec, which
+  closure.json did not record; it does now. With the new default the
+  command runs without the flag and reproduces the closure below
+  byte-for-byte. Structures genuinely distorted by less than 0.01 Å will
+  now be symmetrized away — pass `--symprec` explicitly for those.
 
 ### Added — RMC control experiment (started 2026-09-29)
 - **RMCProfile's X-ray forward model, pinned exactly** (`md_run.py`:

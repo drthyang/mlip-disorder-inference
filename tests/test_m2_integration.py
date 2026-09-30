@@ -156,7 +156,7 @@ def test_m2_xray_closure_cli(m2_run, tmp_path):
     assert fit["box_length_A"] == pytest.approx(10.0)
     assert fit["scale"] == pytest.approx(1.0, abs=1e-4)
     assert fit["Rw_Q"] < 1e-4 and fit["Rw_r"] < 1e-4
-    assert closure["structure"]["symprec"] == pytest.approx(1e-3)
+    assert closure["structure"]["symprec"] == pytest.approx(1e-2)
 
     z = np.load(out / "gr_partials.npz")
     symbols = [s for s, n in zip(z["species"], z["counts"]) for _ in range(n)]

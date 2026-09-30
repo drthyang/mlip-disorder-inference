@@ -72,8 +72,8 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
       RMCProfile's Q-dependent X-ray weights, and compares both sides
       box-convolved at L = 2·rmax (`--compare box`, the X-ray default), so
       the histogram's 20 Å truncation is no longer scored as misfit.
-      **Corrected GTS 5 K closure** (493 configs, `--symprec 0.01`,
-      `results/m2_gts_5k_xray/`): **Rw(Q) = 0.216, scale 0.743,
+      **Corrected GTS 5 K closure** (493 configs, symprec 0.01 — now the
+      default — `results/m2_gts_5k_xray/`): **Rw(Q) = 0.216, scale 0.743,
       Rw(r) = 0.418** (was 0.74 / 0.63 / 0.58). Attribution on the same
       32 snapshots — Rw(Q) at qdamp 0: neutron raw 0.743 (the recorded
       value, reproduced), neutron box 0.546, X-ray raw 0.633, X-ray box

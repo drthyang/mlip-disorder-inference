@@ -722,7 +722,11 @@ def main(argv=None):
     ap.add_argument("--model", default="small",
                     choices=["small", "medium", "large"])
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    ap.add_argument("--symprec", type=float, default=1e-3)
+    ap.add_argument("--symprec", type=float, default=1e-2,
+                    help="Å; symmetrizes the fold AND sets phonopy's tolerance. "
+                    "Must admit the fold's true group: the 493-config GTS "
+                    "fold is P1 at 1e-3, which leaves it off-symmetric and "
+                    "crashes the quantum sampler")
     ap.add_argument("--fmax", type=float, default=1e-3)
     ap.add_argument("--free-lattice", action="store_true",
                     help="relax the cell too (default: keep the experimental "
