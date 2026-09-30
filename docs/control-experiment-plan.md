@@ -97,6 +97,73 @@ error on ⟨A²⟩_ctrl; 32 would give 8 %. The measured side is 490 configs.
 Chains could share a node, but that changes per-chain speed and hence the
 move count reached. Compare at matched moves if packed.
 
+## Positive-control arms (`synth --inject published`)
+
+The null arm says how much amplitude RMC manufactures from nothing; the
+positive arms say how much of a KNOWN static distortion RMC puts back.
+Together they turn the measured amplitudes into a calibrated static
+amplitude.
+
+**Injected structure.** The paper's refined P-4̄2₁m distortion (SM Table IV,
+expanded over the slab orbits by `mode_project.published_field`), minus its
+k = 0 part (`remove_uniform_part` — the Γ offset between the paper's
+AMPLIMODES parent and our RMC-average parent, which is a reference
+mismatch, not a distortion). It is mapped to RMC-frame static offsets
+(`slab_field_to_rmc_static`) with a 1×1×2 period and added to the mean
+separations in `harmonic_pdf` (`static=`). The widths and correlations stay
+those of the cubic MACE null model — MACE cannot host the distorted phase
+(probe D), and "static + the same quantum motion" is the hypothesis being
+calibrated. Single domain, long-range ordered. The known answer is the
+field's own projection through the committed projector (X5 0.1183, X3
+0.0684, W4 0.0278, Δ 0.0205 Å at ×1, identical at every window scale), so
+pattern-rounding leakage cancels in the recovery ratio.
+
+**Two scales, 32 chains each** (`results/rmc_control/positive_x{1,2}_run/`,
+same byte-identical inputs as the null arm; cost 64 node-days together,
+equal to one 64-chain arm):
+
+- **×1** — the published structure as refined.
+- **×2** — the operating point. At w = 4 the measured X5 excess over the
+  M3 three-component expectation (~0.06 Å²) is ~4.5× the power of the full
+  ×1 field (0.014 Å²), so ×1 alone calibrates far from where the verdict
+  sits; ×2 lies near it, and two scales test whether recovery is linear in
+  power (the calibrated amplitude assumes so).
+
+Expected 1σ on ρ (pedestal and per-config scatter taken from the measured
+ensemble, a conservative stand-in; null 64, positive 32 chains):
+
+| mode | w=4 ×1 | w=4 ×2 | w=8 ×1 | w=8 ×2 |
+| --- | --- | --- | --- | --- |
+| X5 | 0.68 | 0.17 | 0.02 | <0.01 |
+| X3 | 0.08 | 0.02 | 0.01 | <0.01 |
+| Δ | 0.26 | 0.06 | 0.07 | 0.02 |
+| W4 | 4.1 | 1.0 | 0.11 | 0.03 |
+
+**W4 cannot be calibrated at the verdict scale by these arms.** Its
+published amplitude (0.026 Å) is tiny against its w = 4 pedestal, yet W4 is
+the strongest M3 excess (r = 2.50). If the W4 verdict matters, add a
+W4-weighted arm (e.g. the W4 variant alone at ~0.15 Å).
+
+**Readout.** `compare ... --positive <npz> <synth_dir>` (repeatable) adds,
+per irrep and scale: ρ = (⟨A²⟩_pos − ⟨A²⟩_null)/A²_inj with a joint
+bootstrap interval, and the measured ensemble's calibrated static amplitude
+A_static = √(max(⟨A²⟩_meas − ⟨A²⟩_null, 0)/ρ). ρ also answers a question of
+its own: if a truly long-range-ordered crystal comes back from RMC as
+*local order, domain-cancelled at box scale* (ρ(w=4) ≫ ρ(w=8)), then the M3
+"local order at 20–40 Å" pattern is how RMC without Bragg data represents
+long-range order, not evidence against it.
+
+**Side result: the measured data prefer the distortion.** Against the
+measured F(Q) (both box-convolved, scale + offset fitted), Rw(Q) / Rw(r)
+drop from 0.248 / 0.40 (null) to 0.213 / 0.31 (×1) and 0.149 / 0.23 (×2).
+In powder data, static amplitude and extra width are partly degenerate
+(the MACE widths may be too narrow), so this is not an amplitude
+measurement. It does independently point at ~×2, and a scan over the scale
+is a cheap forward-closure refinement worth doing. The injected field
+produces superlattice intensity at the F-forbidden reflections (110),
+(210), (211), (320), … growing 4× from ×1 to ×2, as a static distortion
+should.
+
 ## Readout (`rmc_control.py compare`)
 
     python mode_project.py <returned_dir> --exclude AVERAGE -o control.npz
@@ -126,10 +193,10 @@ order the verdicts report is an RMC artifact at that scale.
    level; the true (filtered, correlated) noise is unknown. The misfit
    floor in the real run was systematic, so this should matter little.
    `--noise-scale` exists for a sensitivity arm.
-3. **Positive control (recommended next arm).** Synthetic data from the
-   published P-4̄2₁m distortion plus the same quantum motion, to measure
-   RMC's *recovery* of a known X₅/X₃/W₄ amplitude. It needs static offsets
-   in `harmonic_pdf.harmonic_partials` (a 1×1×2 mean cell); not yet built.
+3. **Positive control: single domain only.** The injected crystal is
+   long-range ordered; a domain-structured variant (coherence 20–40 Å)
+   would need a static field that is not cell-periodic, which the lattice
+   sum does not support. W4 is under-powered (above).
 4. **One MLIP.** The null's dynamics are MACE-MP-0 small at the cubic
    structure. MACE lacks the distorted-phase well (probe D), which is
    correct for a null model but fixes its soft-mode amplitudes.
@@ -143,6 +210,9 @@ order the verdicts report is an RMC artifact at that scale.
 ## Status
 
 - [x] forward model pinned; projection driver; harmonic g(r); synth; stage
-- [ ] run 64 chains on Perlmutter (user)
-- [ ] `compare`; per-mode f_noise; regenerate `verdicts.json` with the control
-- [ ] positive-control arm
+- [x] positive-control arms ×1 and ×2 synthesized and staged (32 chains each)
+- [ ] run the null (64) and positive (2 × 32) chains on Perlmutter (user)
+- [ ] `compare` with `--positive`; per-mode f_noise and calibrated static
+      amplitudes; regenerate `verdicts.json` with the control
+- [ ] optional: W4-weighted arm; scan of the injected scale against the
+      measured F(Q)

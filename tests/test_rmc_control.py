@@ -185,3 +185,97 @@ def test_stage_refuses_a_dat_reading_another_file(tmp_path):
     with pytest.raises(SystemExit, match="reads 'x.fq'"):
         rc.main(["stage", "--synth", str(synth), "--template", str(tpl),
                  "-o", str(tmp_path / "run")])
+
+
+# ------------------------------------------------------ positive control
+
+def _arm(rng, n, extra_x5_power=0.0):
+    """Projection-npz dict: a noisy pedestal plus extra X5 power (Å²)."""
+    keys = np.array(["D", "X5"])
+    out = {"keys": keys, "moves": np.full(n, 2_000_000)}
+    for w in (2, 4, 8):
+        a2 = rng.normal(0.01, 0.001, size=(n, 2))
+        a2[:, 1] += extra_x5_power
+        out[f"rms_w{w}"] = np.sqrt(a2)
+        out[f"rms_null_w{w}"] = np.sqrt(np.full((n, 2), 0.008))
+    return out
+
+
+def test_recovery_and_calibrated_static_amplitude():
+    rng = np.random.default_rng(1)
+    inj = {f"w{w}": {"D": 0.02, "X5": 0.12} for w in (2, 4, 8)}
+    null = _arm(rng, 64)
+    pos = _arm(rng, 64, extra_x5_power=0.5 * 0.12**2)       # ρ = 0.5
+    meas = _arm(rng, 400, extra_x5_power=0.5 * 0.08**2)     # static 0.08 Å
+    res = rc.recovery(meas, null, pos, inj, n_boot=400)
+    x5 = res["w4"]["X5"]
+    assert x5["recovery"] == pytest.approx(0.5, abs=0.06)
+    assert x5["ci95"][0] < 0.5 < x5["ci95"][1]
+    assert x5["static_estimate_A"] == pytest.approx(0.08, rel=0.1)
+    # no injected D power recovered -> estimate undefined or huge CI
+    assert abs(res["w4"]["D"]["recovery"]) < 3.0
+
+
+def test_compare_cli_with_positive_arm(tmp_path):
+    rng = np.random.default_rng(2)
+    inj = {f"w{w}": {"D": 0.02, "X5": 0.12} for w in (2, 4, 8)}
+    for name, d in (("meas", _arm(rng, 200, 0.004)), ("null", _arm(rng, 40)),
+                    ("pos", _arm(rng, 40, 0.0144))):
+        np.savez(tmp_path / f"{name}.npz", **d)
+    synth = tmp_path / "synth_positive_x1"
+    synth.mkdir()
+    (synth / "synth_manifest.json").write_text(json.dumps(
+        {"injection": {"mode": "published", "injected_amplitudes_A": inj}}))
+    out = tmp_path / "rep.json"
+    assert rc.main(["compare", "--measured", str(tmp_path / "meas.npz"),
+                    "--control", str(tmp_path / "null.npz"),
+                    "--positive", str(tmp_path / "pos.npz"), str(synth),
+                    "--n-boot", "200", "-o", str(out)]) == 0
+    rep = json.loads(out.read_text())
+    assert rep["positive"]["synth_positive_x1"]["w4"]["X5"]["recovery"] == \
+        pytest.approx(1.0, abs=0.15)
+    assert rep["ensembles"]["n_synth_positive_x1"] == 40
+
+
+def test_stage_refuses_arm_data_mismatch(tmp_path):
+    tpl = tmp_path / "tpl"
+    tpl.mkdir()
+    (tpl / "GTS_5K.dat").write_text(DAT)
+    (tpl / "GTS_5K.rmc6f").write_text("x")
+    (tpl / "submit.sh").write_text(SUBMIT_TEMPLATE)
+    for arm, mode in (("positive_x1", "none"), ("null", "published")):
+        synth = tmp_path / f"synth_{arm}"
+        synth.mkdir()
+        rc.write_fq(synth / "scale_ft_rmc.fq", np.arange(1, 2, 0.1),
+                    np.zeros(10))
+        (synth / "synth_manifest.json").write_text(
+            json.dumps({"injection": {"mode": mode}}))
+        with pytest.raises(SystemExit, match="null data for the null arm"):
+            rc.main(["stage", "--synth", str(synth), "--template", str(tpl),
+                     "--arm", arm, "-o", str(tmp_path / f"run_{arm}")])
+
+
+GTS_START = Path(__file__).resolve().parent.parent / \
+    "data/ensemble_20A_5K/GTS_5K.rmc6f"
+GTS_CIF = Path(__file__).resolve().parent.parent / "data/GTS_5K.cif"
+
+
+@pytest.mark.skipif(not (GTS_START.is_file() and GTS_CIF.is_file()),
+                    reason="needs the private GTS start box and CIF")
+def test_gts_injection_known_answer_and_frame_guard():
+    atoms0, _ = rc.start_cell(GTS_START)
+    static, info = rc.injection_static("published", 1.0, False, GTS_CIF,
+                                       atoms0)
+    assert sorted(static.shape[:3]) == [1, 1, 2]
+    a4 = info["injected_amplitudes_A"]["w4"]
+    assert a4["X5"] == pytest.approx(0.1196, rel=0.05)
+    assert a4["X3"] == pytest.approx(0.0719, rel=0.1)
+    s2, info2 = rc.injection_static("published", 2.0, False, GTS_CIF, atoms0)
+    assert np.allclose(s2, 2 * static)
+    assert info2["injected_amplitudes_A"]["w8"]["X5"] == pytest.approx(
+        2 * info["injected_amplitudes_A"]["w8"]["X5"], rel=1e-6)
+    shuffled = atoms0.copy()
+    shuffled.set_scaled_positions(np.roll(atoms0.get_scaled_positions(), 1, 0))
+    with pytest.raises(SystemExit, match="disagree"):
+        rc.injection_static("published", 1.0, False, GTS_CIF, shuffled)
+    assert rc.injection_static("none", 1.0, False, GTS_CIF, atoms0)[0] is None

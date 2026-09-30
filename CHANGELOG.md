@@ -78,6 +78,22 @@
   field reads X5 0.1183 / X3 0.0684 / W4 0.0278 / Δ 0.0205 Å (published
   0.1196 / 0.0719 / 0.026 / 0.0212) at every window scale, identical to
   the pattern-frame route. 3 new tests in `tests/test_projection_frame.py`.
+- **Positive-control arms, ready to run.** `rmc_control.py synth --inject
+  published [--inject-scale s] [--keep-gamma]` adds the published P-4̄2₁m
+  distortion (k = 0 part removed) as static offsets on the null model's
+  quantum motion and records the known answer (the field's own windowed
+  projection) in the manifest; a frame guard refuses a start cell that
+  disagrees with the parent CIF. `stage --arm` refuses null data under a
+  positive arm and vice versa, defaults the stem to `GTS_5K_<arm>`, and
+  writes an arm-specific README. `compare --positive NPZ SYNTH_DIR`
+  (repeatable) adds the recovery ρ = (⟨A²⟩_pos − ⟨A²⟩_null)/A²_inj and the
+  calibrated static amplitude √((⟨A²⟩_meas − ⟨A²⟩_null)/ρ) with joint
+  bootstrap intervals. GTS ×1 and ×2 arms synthesized (77 s each; 35 M
+  pairs) and staged, 32 chains each. 4 new tests. Side result: against the
+  measured F(Q), Rw(Q) falls from 0.248 (null) to 0.213 (×1) and 0.149
+  (×2) — the data prefer the distortion, and more of it (partly degenerate
+  with too-narrow MACE widths). Design, power table and caveats in
+  `docs/control-experiment-plan.md`.
 
 ### Found
 - **`verdicts.json` v0.1 is not reproducible from committed code.** The

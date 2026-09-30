@@ -172,8 +172,9 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
         start box / `optimization.dat` byte-identical to the original;
         64 chains → 5–6 % SE on the control ⟨A²⟩ at w = 4)
   - [ ] RMCProfile runs (user, NERSC) → `rmc_control.py compare`
-  - [ ] positive-control arm (published P-4̄2₁m distortion + quantum
-        motion: RMC's recovery of a known amplitude)
+  - [x] positive-control arm (published P-4̄2₁m distortion + quantum
+        motion: RMC's recovery of a known amplitude) — built and staged;
+        runs pending with the null arm
     - [x] `harmonic_pdf.harmonic_partials(static=...)`: periodic static
           offsets on top of the parent's quantum widths/correlations;
           matches snapshots-plus-offsets (widths to 2 %)
@@ -181,6 +182,11 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
           (`mode_project.published_field` → `remove_uniform_part` →
           `slab_field_to_rmc_static`): an 8³ box of it reads X5 0.118 /
           X3 0.068 / W4 0.028 / Δ 0.021 Å at every window scale
+    - [x] `synth --inject published --inject-scale {1,2}` + arm-aware
+          `stage` + `compare --positive` (recovery ρ and calibrated static
+          amplitude); ×1 and ×2 arms staged, 32 chains each
+          (`results/rmc_control/positive_x{1,2}_run/`). W4 is
+          under-powered at w = 4 (σ_ρ ≈ 1 even at ×2)
   - [ ] regenerate `verdicts.json` through the committed driver with the
         control-calibrated per-mode noise
 

@@ -112,7 +112,8 @@ def dat_value(dat_path: Path, keyword: str):
     return None
 
 
-def compare_projections(meas, ctrl, windows=(2, 4, 8), n_boot=2000, seed=0):
+def compare_projections(meas, ctrl, windows=(2, 4, 8), n_boot=2000, seed=0,
+                        positives=None):
     """Per-irrep control ratio r_ctrl = ⟨A²⟩_meas / ⟨A²⟩_ctrl, all scales.
 
     meas / ctrl: mappings with 'keys', 'moves' and per scale 'rms_w{w}',
@@ -120,6 +121,9 @@ def compare_projections(meas, ctrl, windows=(2, 4, 8), n_boot=2000, seed=0):
     Bootstrap resamples configurations of BOTH ensembles; the interval is
     the 2.5–97.5 percentile. Classification of the interval:
     'excess' (lower bound > 1), 'deficit' (upper < 1), else 'explained'.
+    positives: optional list of (name, projections, injected) positive-
+    control arms, injected = {f"w{w}": {key: A}} from the arm's synth
+    manifest; adds a 'positive' section (see `recovery`).
     """
     keys = [str(k) for k in meas["keys"]]
     if keys != [str(k) for k in ctrl["keys"]]:
@@ -160,7 +164,70 @@ def compare_projections(meas, ctrl, windows=(2, 4, 8), n_boot=2000, seed=0):
         "moves_measured_median": float(np.median(meas["moves"])),
         "moves_control_median": float(np.median(ctrl["moves"])),
     }
+    if positives:
+        out["positive"] = {name: recovery(meas, ctrl, pos, injected, windows,
+                                          n_boot, seed)
+                           for name, pos, injected in positives}
+        for name, pos, _ in positives:
+            out["ensembles"][f"n_{name}"] = int(len(pos["rms_w4"]))
+            out["ensembles"][f"moves_{name}_median"] = float(
+                np.median(pos["moves"]))
     return out
+
+
+def recovery(meas, null, pos, injected, windows=(2, 4, 8), n_boot=2000,
+             seed=0):
+    """Positive-control calibration per irrep and window scale.
+
+    ρ = (⟨A²⟩_pos − ⟨A²⟩_null) / A²_injected is the fraction of a KNOWN
+    static power that RMC puts back into its boxes (1 = full recovery; the
+    known answer is the injected field's own projection, so pattern leakage
+    cancels). The measured ensemble's calibrated static amplitude is then
+    A_static = √(max(⟨A²⟩_meas − ⟨A²⟩_null, 0) / ρ) — valid if recovery is
+    linear in power, which two arms at different scales test. Intervals:
+    joint bootstrap over all three ensembles; A_static is undefined (None)
+    where ρ ≤ 0.
+    """
+    keys = [str(k) for k in meas["keys"]]
+    for d in (null, pos):
+        if [str(k) for k in d["keys"]] != keys:
+            raise ValueError("projection files disagree on keys")
+    rng = np.random.default_rng(seed + 1)
+    res = {}
+    for w in windows:
+        a2m = np.asarray(meas[f"rms_w{w}"])**2
+        a2n = np.asarray(null[f"rms_w{w}"])**2
+        a2p = np.asarray(pos[f"rms_w{w}"])**2
+        inj2 = np.array([injected[f"w{w}"][k]**2 for k in keys])
+
+        def stats(im, i_n, ip):
+            dn = a2n[i_n].mean(0)
+            rho = (a2p[ip].mean(0) - dn) / inj2
+            ex = np.maximum(a2m[im].mean(0) - dn, 0.0)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                est = np.where(rho > 0, np.sqrt(ex / rho), np.nan)
+            return rho, est
+
+        rho, est = stats(slice(None), slice(None), slice(None))
+        boot_r = np.empty((n_boot, len(keys)))
+        boot_e = np.empty((n_boot, len(keys)))
+        for b in range(n_boot):
+            boot_r[b], boot_e[b] = stats(rng.integers(0, len(a2m), len(a2m)),
+                                         rng.integers(0, len(a2n), len(a2n)),
+                                         rng.integers(0, len(a2p), len(a2p)))
+        r_lo, r_hi = np.percentile(boot_r, [2.5, 97.5], axis=0)
+        with np.errstate(invalid="ignore"):
+            e_lo, e_hi = np.nanpercentile(boot_e, [2.5, 97.5], axis=0)
+        res[f"w{w}"] = {k: {
+            "injected_A": round(float(np.sqrt(inj2[j])), 4),
+            "recovery": round(float(rho[j]), 3),
+            "ci95": [round(float(r_lo[j]), 3), round(float(r_hi[j]), 3)],
+            "static_estimate_A": (None if not np.isfinite(est[j])
+                                  else round(float(est[j]), 4)),
+            "static_ci95": [None if not np.isfinite(x) else round(float(x), 4)
+                            for x in (e_lo[j], e_hi[j])],
+        } for j, k in enumerate(keys)}
+    return res
 
 
 # ----------------------------------------------------------------------------
@@ -204,11 +271,59 @@ def mean_structure_phonon(phonon, frac_mean, symprec):
     return ph
 
 
+def injection_static(inject, scale, keep_gamma, cif, atoms0):
+    """Static offsets for the positive-control arm, and their known answer.
+
+    inject='published': the paper's refined P-4̄2₁m distortion (SM Table IV)
+    — minus its k = 0 part unless keep_gamma — times `scale`, as RMC-frame
+    offsets on the 52-site cell (mode_project). The known answer is that
+    field's own windowed projection through the committed projector (so
+    pattern-rounding leakage cancels in the recovery ratio).
+
+    Returns (static (p1,p2,p3,52,3) Å or None, info dict for the manifest).
+    """
+    if inject == "none":
+        return None, {"mode": "none"}
+    import mode_project as mp
+
+    setup = mp.projection_setup(cif)
+    a_cub = float(atoms0.cell.lengths()[0])
+    frac0 = atoms0.get_scaled_positions()
+    dev = np.abs(((frac0 - setup["ideal"] + 0.5) % 1.0 - 0.5) * a_cub).max()
+    if atoms0.get_chemical_symbols() != list(setup["elem"]) or dev > 0.05:
+        raise SystemExit(f"start cell and {cif.name} disagree (site order / "
+                         f"frame; max deviation {dev:.3f} Å)")
+    F = mp.published_field(setup)
+    if not keep_gamma:
+        F = mp.remove_uniform_part(F, setup)
+    static = mp.slab_field_to_rmc_static(scale * F, setup)
+    X, sid, ijk = mp.static_box(setup, static, a_cub)
+    amp = mp.config_amplitudes(X, sid, ijk, a_cub, setup)
+    keys = [str(k) for k in setup["keys"]]
+    injected = {f"w{w}": {k: round(float(np.sqrt((amp[f"w{w}"][:, j]**2
+                                                    ).mean())), 5)
+                          for j, k in enumerate(keys)}
+                for w in mp.WINDOWS}
+    info = {"mode": "published (SM Table IV total)", "scale": scale,
+            "gamma_part": "kept" if keep_gamma else "removed (k = 0)",
+            "cif": str(cif), "period_cells": list(static.shape[:3]),
+            "max_static_A": round(float(np.abs(static).max()), 4),
+            "published_amplitudes_A": setup["ref"]["published_amplitudes_A"],
+            "injected_amplitudes_A": injected,
+            "note": "static offsets on the parent's quantum widths and "
+                    "correlations; single domain, long-range ordered"}
+    return static, info
+
+
 def cmd_synth(args):
     import harmonic_pdf as hp
     from ase.io import write as ase_write
     from ase.optimize import FIRE
 
+    if args.outdir is None:
+        args.outdir = Path("results/rmc_control/" + (
+            "synth" if args.inject == "none"
+            else f"synth_positive_x{args.inject_scale:g}"))
     out = args.outdir
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -240,11 +355,20 @@ def cmd_synth(args):
     frac_mean = (atoms0 if args.mean == "start" else relaxed
                  ).get_scaled_positions()
     ph_mean = mean_structure_phonon(phonon, frac_mean, args.symprec)
+    static, injection = injection_static(args.inject, args.inject_scale,
+                                         args.keep_gamma, args.cif, atoms0)
+    if static is not None:
+        inj4 = injection["injected_amplitudes_A"]["w4"]
+        print(f"  injecting {injection['mode']} ×{args.inject_scale:g} "
+              f"(Γ {injection['gamma_part']}): max static "
+              f"{injection['max_static_A']} Å; " + ", ".join(
+                  f"{k} {v:.4f}" for k, v in inj4.items()) + " Å")
 
     print(f"[3/5] harmonic g(r): T = {args.temperature} K, grid {args.grid}³, "
           f"r ≤ {args.rmax} Å")
     r, g, info = hp.harmonic_partials(ph_mean, args.temperature, M=args.grid,
-                                      r_max=args.rmax, dr=args.dr)
+                                      r_max=args.rmax, dr=args.dr,
+                                      static=static)
     fmin = float(np.min(ph_mean.qpoints.frequencies))   # the grid just run
 
     print("[4/5] X-ray F(Q) on the measured grid + noise")
@@ -276,10 +400,15 @@ def cmd_synth(args):
              F_noisy=F_noisy, sigma=sig, F_measured=F_meas,
              conv_measured=conv_meas, conv_synth=conv_syn, r_g=r_g,
              G_measured=G_meas, G_synth=G_syn, U=info["U"],
+             static=np.zeros(0) if static is None else static,
              **{f"g_{a}_{b}": v for (a, b), v in g.items()})
     manifest = {
-        "purpose": "zero-static-disorder synthetic X-ray F(Q) for the RMC "
-                   "control experiment (docs/control-experiment-plan.md)",
+        "purpose": ("zero-static-disorder synthetic X-ray F(Q) for the RMC "
+                    "control experiment" if static is None else
+                    "synthetic X-ray F(Q) with a KNOWN static distortion "
+                    "(positive control)") +
+                   " (docs/control-experiment-plan.md)",
+        "injection": injection,
         "generated": time.strftime("%Y-%m-%d %H:%M"),
         "inputs": {"start": str(args.start), "start_sha256": _sha256(args.start),
                    "data": str(args.data), "data_sha256": _sha256(args.data),
@@ -371,6 +500,8 @@ def render_submit(template: str, stem: str, i: int) -> str:
 
 
 def cmd_stage(args):
+    if args.outdir is None:
+        args.outdir = Path(f"results/rmc_control/{args.arm}_run")
     tpl, synth, out = args.template, args.synth, args.outdir
     fq = synth / "scale_ft_rmc.fq"
     dat = tpl / args.dat_name
@@ -382,6 +513,14 @@ def cmd_stage(args):
     data_file = dat_value(dat, "FILENAME")
     if data_file != fq.name:
         raise SystemExit(f"{dat.name} reads {data_file!r}, not {fq.name!r}")
+    synth_man = (json.loads((synth / "synth_manifest.json").read_text())
+                 if (synth / "synth_manifest.json").is_file() else None)
+    injected = (synth_man or {}).get("injection", {}).get("mode", "none")
+    if (args.arm == "null") != (injected == "none"):
+        raise SystemExit(f"arm {args.arm!r} but {synth} carries injection "
+                         f"{injected!r} — null data for the null arm only")
+    if args.stem is None:
+        args.stem = f"GTS_5K_{args.arm}"
     out.mkdir(parents=True, exist_ok=True)
     shutil.copy2(fq, out / fq.name)
     for aux in args.aux:
@@ -407,24 +546,35 @@ def cmd_stage(args):
         "differs": ["scale_ft_rmc.fq (synthetic)"],
         "sha256": {"scale_ft_rmc.fq": _sha256(out / fq.name),
                    "dat": _sha256(dat), "start": _sha256(start)},
-        "synth_manifest": json.loads((synth / "synth_manifest.json").read_text())
-        if (synth / "synth_manifest.json").is_file() else None,
+        "synth_manifest": synth_man,
         "staged": time.strftime("%Y-%m-%d %H:%M"),
     }
     (out / "stage_manifest.json").write_text(json.dumps(manifest, indent=2))
-    (out / "README.md").write_text(_stage_readme(args))
+    (out / "README.md").write_text(_stage_readme(args, synth_man))
     print(f"  staged {args.n_chains} chains in {out} "
           f"({sum(1 for _ in out.iterdir())} files)")
     return 0
 
 
-def _stage_readme(args):
+def _stage_readme(args, synth_man=None):
+    inj = (synth_man or {}).get("injection", {"mode": "none"})
+    if inj["mode"] == "none":
+        what = ("the MLIP quantum-harmonic null model (zero static\n"
+                "disorder by construction)")
+        readout = "control.npz"
+    else:
+        a4 = inj["injected_amplitudes_A"]["w4"]
+        what = (f"the published P-4̄2₁m distortion ×{inj['scale']:g} (Γ part "
+                f"{inj['gamma_part']};\nX5 {a4['X5']:.4f}, X3 {a4['X3']:.4f}, "
+                f"W4 {a4['W4']:.4f}, Δ {a4['D']:.4f} Å through the projector) "
+                "as\nSTATIC offsets on the same MLIP quantum motion — a "
+                "known answer")
+        readout = f"{args.arm}.npz"
     return f"""# RMC control run — {args.arm} arm ({args.n_chains} chains)
 
-Synthetic X-ray F(Q) of the MLIP quantum-harmonic null model (zero static
-disorder by construction), refined by RMCProfile exactly as the measured
-5 K data were: same `.dat`, same ideal starting box, same auxiliary inputs,
-same job shape. Only `scale_ft_rmc.fq` differs. Generated by
+Synthetic X-ray F(Q) of {what}, refined by RMCProfile exactly as the
+measured 5 K data were: same `.dat`, same ideal starting box, same auxiliary
+inputs, same job shape. Only `scale_ft_rmc.fq` differs. Generated by
 `rmc_control.py synth/stage` (see `stage_manifest.json`, `docs/control-
 experiment-plan.md` in the repo). Private data — do not publish.
 
@@ -449,9 +599,10 @@ moves if you pack them.
 The final `{args.stem}_<i>.rmc6f` of every chain (plus `.chi2`/`.log` for
 convergence). Then, in the repo:
 
-    python mode_project.py <returned_dir> --exclude AVERAGE -o control.npz
-    python rmc_control.py compare --measured results/m3_projections_aligned.npz \\
-        --control control.npz -o results/rmc_control/control_report.json
+    python mode_project.py <returned_dir> --exclude AVERAGE -o {readout}
+
+and pass it to `rmc_control.py compare` (see docs/control-experiment-plan.md
+— the positive arms enter as `--positive <npz> <synth_dir>`).
 """
 
 
@@ -462,15 +613,34 @@ convergence). Then, in the repo:
 def cmd_compare(args):
     meas = dict(np.load(args.measured))
     ctrl = dict(np.load(args.control))
-    rep = compare_projections(meas, ctrl, n_boot=args.n_boot, seed=args.seed)
+    positives = []
+    for npz, synth_dir in args.positive or []:
+        man = json.loads((Path(synth_dir) / "synth_manifest.json").read_text())
+        inj = man.get("injection", {})
+        if inj.get("mode", "none") == "none":
+            raise SystemExit(f"{synth_dir} is not a positive-control synth")
+        positives.append((Path(synth_dir).name, dict(np.load(npz)),
+                          inj["injected_amplitudes_A"]))
+    rep = compare_projections(meas, ctrl, n_boot=args.n_boot, seed=args.seed,
+                              positives=positives)
     rep["inputs"] = {"measured": str(args.measured),
-                     "control": str(args.control)}
+                     "control": str(args.control),
+                     "positive": [list(map(str, p)) for p in
+                                  (args.positive or [])]}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(rep, indent=2))
     print(f"  r_ctrl at w={args.window} (measured/control ⟨A²⟩, 95 % CI):")
     for k, row in rep[f"w{args.window}"].items():
         print(f"    {k:3s} {row['r_ctrl']:6.3f}  [{row['ci95'][0]:.3f}, "
               f"{row['ci95'][1]:.3f}]  {row['class']}")
+    for name, arm in rep.get("positive", {}).items():
+        print(f"  positive arm {name} at w={args.window}: recovery ρ, and the "
+              "measured static amplitude it implies (95 % CI):")
+        for k, row in arm[f"w{args.window}"].items():
+            est = row["static_estimate_A"]
+            print(f"    {k:3s} inj {row['injected_A']:.4f}  ρ {row['recovery']:6.3f}"
+                  f" [{row['ci95'][0]:.3f}, {row['ci95'][1]:.3f}]  A_static "
+                  + ("—" if est is None else f"{est:.4f} {row['static_ci95']}"))
     e = rep["ensembles"]
     print(f"  {e['n_measured']} measured vs {e['n_control']} control configs;"
           f" median moves {e['moves_measured_median']:.0f} vs "
@@ -514,8 +684,18 @@ def main(argv=None):
                    "starting (experimental) positions, or the MLIP minimum")
     s.add_argument("--noise-scale", type=float, default=1.0)
     s.add_argument("--seed", type=int, default=0)
-    s.add_argument("-o", "--outdir", type=Path,
-                   default=Path("results/rmc_control/synth"))
+    s.add_argument("--inject", default="none", choices=["none", "published"],
+                   help="positive control: add the published P-4̄2₁m "
+                   "distortion as static offsets")
+    s.add_argument("--inject-scale", type=float, default=1.0,
+                   help="multiply the injected field (1 = published)")
+    s.add_argument("--keep-gamma", action="store_true",
+                   help="keep the field's k = 0 (parent-reference) part")
+    s.add_argument("--cif", type=Path, default=Path("data/GTS_5K.cif"),
+                   help="parent CIF in RMC site-id order (for --inject)")
+    s.add_argument("-o", "--outdir", type=Path, default=None,
+                   help="default results/rmc_control/synth, or "
+                   "synth_positive_x<scale> with --inject")
     s.set_defaults(func=cmd_synth)
 
     s = sub.add_parser("stage", help="NERSC run directory")
@@ -525,16 +705,23 @@ def main(argv=None):
     s.add_argument("--dat-name", default="GTS_5K.dat")
     s.add_argument("--start-name", default="GTS_5K.rmc6f")
     s.add_argument("--aux", nargs="*", default=["optimization.dat"])
-    s.add_argument("--stem", default="GTS_5K_null")
-    s.add_argument("--arm", default="null")
+    s.add_argument("--arm", default="null",
+                   help="'null' (needs uninjected synth data) or a positive "
+                   "arm name, e.g. positive_x1")
+    s.add_argument("--stem", default=None, help="default GTS_5K_<arm>")
     s.add_argument("--n-chains", type=int, default=64)
     s.add_argument("-o", "--outdir", type=Path,
-                   default=Path("results/rmc_control/null_run"))
+                   default=None, help="default results/rmc_control/<arm>_run")
     s.set_defaults(func=cmd_stage)
 
     s = sub.add_parser("compare", help="measured vs control projections")
     s.add_argument("--measured", type=Path, required=True)
     s.add_argument("--control", type=Path, required=True)
+    s.add_argument("--positive", nargs=2, action="append",
+                   metavar=("NPZ", "SYNTH_DIR"),
+                   help="a positive-control arm: its projections and the "
+                   "synth directory holding its injected amplitudes "
+                   "(repeatable)")
     s.add_argument("-w", "--window", type=int, default=4, choices=[2, 4, 8])
     s.add_argument("--n-boot", type=int, default=2000)
     s.add_argument("--seed", type=int, default=0)
