@@ -160,11 +160,67 @@ measured F(Q) (both box-convolved, scale + offset fitted), Rw(Q) / Rw(r)
 drop from 0.248 / 0.40 (null) to 0.213 / 0.31 (×1) and 0.149 / 0.23 (×2).
 In powder data, static amplitude and extra width are partly degenerate
 (the MACE widths may be too narrow), so this is not an amplitude
-measurement. It does independently point at ~×2, and a scan over the scale
-is a cheap forward-closure refinement worth doing. The injected field
+measurement — the scale scan below separates them. The injected field
 produces superlattice intensity at the F-forbidden reflections (110),
 (210), (211), (320), … growing 4× from ×1 to ×2, as a static distortion
 should.
+
+## Scale scan — forward closure of the distortion amplitude (`rmc_control.py scan`)
+
+The static amplitude is fitted to the data directly by forward modeling,
+with no RMC involved. Model: s × (published field, k = 0 removed) as static
+offsets, plus an extra isotropic, uncorrelated width u_extra (the nuisance
+that could mimic it), on the MACE quantum null. The X-ray F(Q) is compared
+with the measured one as RMC sees it (both box-convolved, scale + offset
+fitted), and G(r) is compared in two windows. Grid: s = 0–5 in steps of 0.25
+× u_extra = 0–0.08 Å in steps of 0.01 (189 points, 15 min); an 8³ q-grid and
+r ≤ 60 Å reproduce the production ×0/×1/×2 values to 1e-4.
+`results/rmc_control/scale_scan/` (scan.json, scan.npz, scan.png).
+
+| window | best, u_extra = 0 | best, width free | profile within 2 % of its minimum |
+| --- | --- | --- | --- |
+| G(r) 1.5–5 Å | ×1.66 (Rw 0.209) | ×1.61, u_extra 0.02 Å (0.198) | ×1.5–1.75 |
+| G(r) 5 Å – L/2 | ×2.04 (0.217) | ×0, u_extra 0.06 Å (0.146) | ×0–0.5 |
+| G(r) 1.5 Å – L/2 | ×1.79 (0.220) | ×1.66, u_extra 0.03 Å (0.195) | ×1.5–1.75 |
+| F(Q), box-convolved | ×2.49 (0.137) | ×1.41, u_extra 0.06 Å (0.104) | ×0–1.75 |
+
+**Reading.**
+
+1. **The local structure requires the distortion, at ~1.6× the
+   single-crystal amplitude** (X5 ≈ 0.19 Å). This is robust to the width
+   nuisance: without the distortion no width does better than Rw 0.295
+   locally, against 0.200 at ×1.5.
+2. **Beyond 5 Å, a long-range-coherent distortion is not supported** once
+   the width is free. An undistorted average plus 0.06 Å of uncorrelated
+   width wins (0.146 vs 0.217 for ×2 without extra width). That is the
+   order–disorder / short-range-order picture, reached without RMC. The
+   static field's own rms at ×1.6 is 0.037 Å per component (Ta, Se), so
+   orientation-scrambled local distortions account for part of that
+   0.06 Å; the rest is broadening the MACE null lacks.
+3. **F(Q) alone cannot tell** (its profile is flat over ×0–1.75); the
+   discrimination lives in real space, window by window.
+4. **Independent check against the paper's own local refinement.** The
+   spread of short Ta–Ta distances in the PDFgui 5 K local fits
+   (`data/PDF/P-421m_refined/`) is 0.225–0.229 Å; ours is 0.115 Å at ×1,
+   0.185 at ×1.6 and 0.231 at ×2. The paper's local structure also carries
+   ~2× the single-crystal distortion.
+
+**Caveats.** One fixed irrep mix is scaled (the data may prefer a
+different X5 : X3 : W4 : Δ ratio). The nuisance is isotropic and
+uncorrelated only. Widths are MACE's. The Γ part is removed (the PDFgui
+fits have a smaller mean Ta–Ta, 3.01 vs 3.035 Å — a Γ₁ cluster-breathing
+difference not scanned). The X-ray weights are Ta-dominated. Systematic
+model error dominates the misfit, so the minima carry flatness ranges, not
+statistical intervals.
+
+**Consequences.** The ×1 and ×2 positive arms bracket the local amplitude.
+They are long-range ordered, however, while the data are not beyond
+~5 Å. The natural next forward models are (i) a correlation-length scan —
+the distortion coherent within domains of size ξ with random arm/phase
+between them, which needs a box-based (non-periodic) static field — and
+(ii) per-irrep amplitudes. Both are small steps toward the model-space
+refinement in `docs/idea-dynamic-refinement.md`, of which this scan is a
+one-parameter instance.
 
 ## Readout (`rmc_control.py compare`)
 
@@ -216,5 +272,7 @@ order the verdicts report is an RMC artifact at that scale.
 - [ ] run the null (64) and positive (2 × 32) chains on Perlmutter (user)
 - [ ] `compare` with `--positive`; per-mode f_noise and calibrated static
       amplitudes; regenerate `verdicts.json` with the control
-- [ ] optional: W4-weighted arm; scan of the injected scale against the
-      measured F(Q)
+- [x] scale scan against the measured F(Q): local ×1.5–1.75, no long-range
+      coherence beyond ~5 Å
+- [ ] optional: W4-weighted arm; correlation-length (domain-size) scan;
+      per-irrep amplitude scan

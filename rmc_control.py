@@ -315,18 +315,17 @@ def injection_static(inject, scale, keep_gamma, cif, atoms0):
     return static, info
 
 
-def cmd_synth(args):
-    import harmonic_pdf as hp
+def build_model(args, out):
+    """Start cell, box, RMCProfile resolution and the MLIP harmonic model.
+
+    Shared by `synth` and `scan`: relaxes internal coordinates at the
+    experimental lattice, computes FCs on fc_dim³, and returns the phonopy
+    object carrying the chosen mean positions (see `mean_structure_phonon`).
+    Writes relaxed_null.cif into `out`.
+    """
     from ase.io import write as ase_write
     from ase.optimize import FIRE
 
-    if args.outdir is None:
-        args.outdir = Path("results/rmc_control/" + (
-            "synth" if args.inject == "none"
-            else f"synth_positive_x{args.inject_scale:g}"))
-    out = args.outdir
-    out.mkdir(parents=True, exist_ok=True)
-    t0 = time.time()
     qdamp = float(dat_value(args.dat, "RESOLUTION_CORRECTION") or 0.0)
     print(f"[1/5] start cell from {args.start.name}; qdamp = {qdamp} Å⁻¹ "
           f"(from {args.dat.name})")
@@ -355,6 +354,52 @@ def cmd_synth(args):
     frac_mean = (atoms0 if args.mean == "start" else relaxed
                  ).get_scaled_positions()
     ph_mean = mean_structure_phonon(phonon, frac_mean, args.symprec)
+    return {"atoms0": atoms0, "box_len": box_len, "rho0": rho0,
+            "qdamp": qdamp, "shift": shift, "ph_mean": ph_mean}
+
+
+def closure_metrics(Q, F_meas, F_syn, box_len, rho0, dr=0.01):
+    """How far a synthetic F(Q) is from the measured one, as RMC sees it.
+
+    Both sides box-convolved (`md_run.rmc_box_convolve`), then scale+offset
+    fitted: Rw(Q). G(r) of both (FT to L/2), scale+offset fitted over
+    1.5 Å < r < L/2: Rw(r), also reported over the local (1.5–5 Å) and
+    medium-range (5 Å – L/2) windows with the same fit. Dimensionless.
+    """
+    conv_meas = md_run.rmc_box_convolve(Q, F_meas, box_len, rho0)
+    conv_syn = md_run.rmc_box_convolve(Q, F_syn, box_len, rho0)
+    s, o, rw_q = md_run.fit_scale_offset(conv_meas, conv_syn)
+    r_g = np.arange(dr, box_len / 2, dr)
+    G_meas = md_run.fq_to_gr(Q, F_meas, r_g, rho0)
+    G_syn = md_run.fq_to_gr(Q, F_syn, r_g, rho0)
+    m = r_g > 1.5
+    s_r, o_r, rw_r = md_run.fit_scale_offset(G_meas[m], G_syn[m])
+    fit_g = s_r * G_syn + o_r
+
+    def rw(sel):
+        return float(np.sqrt(((G_meas[sel] - fit_g[sel])**2).sum()
+                             / (G_meas[sel]**2).sum()))
+    return {"scale": s, "offset": o, "Rw_Q": rw_q, "Rw_r": rw_r,
+            "Rw_r_local": rw(m & (r_g < 5.0)), "Rw_r_mid": rw(r_g >= 5.0),
+            "scale_r": s_r, "offset_r": o_r, "conv_meas": conv_meas,
+            "conv_syn": conv_syn, "r_g": r_g, "G_meas": G_meas,
+            "G_syn": G_syn}
+
+
+def cmd_synth(args):
+    import harmonic_pdf as hp
+
+    if args.outdir is None:
+        args.outdir = Path("results/rmc_control/" + (
+            "synth" if args.inject == "none"
+            else f"synth_positive_x{args.inject_scale:g}"))
+    out = args.outdir
+    out.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    mdl = build_model(args, out)
+    atoms0, box_len, rho0, qdamp, shift, ph_mean = (
+        mdl["atoms0"], mdl["box_len"], mdl["rho0"], mdl["qdamp"],
+        mdl["shift"], mdl["ph_mean"])
     static, injection = injection_static(args.inject, args.inject_scale,
                                          args.keep_gamma, args.cif, atoms0)
     if static is not None:
@@ -376,14 +421,11 @@ def cmd_synth(args):
     symbols = list(ph_mean.unitcell.symbols)
     F_clean = md_run.xray_fq(r, g, symbols, Q, rho0, qdamp)
     # the comparison RMCProfile makes: both sides box-convolved, scale+offset
-    conv_meas = md_run.rmc_box_convolve(Q, F_meas, box_len, rho0)
-    conv_syn = md_run.rmc_box_convolve(Q, F_clean, box_len, rho0)
-    s, o, rw_q = md_run.fit_scale_offset(conv_meas, conv_syn)
-    r_g = np.arange(args.dr, box_len / 2, args.dr)
-    G_meas = md_run.fq_to_gr(Q, F_meas, r_g, rho0)
-    G_syn = md_run.fq_to_gr(Q, F_clean, r_g, rho0)
-    m = r_g > 1.5
-    s_r, o_r, rw_r = md_run.fit_scale_offset(G_meas[m], G_syn[m])
+    cm = closure_metrics(Q, F_meas, F_clean, box_len, rho0, args.dr)
+    s, o, rw_q, rw_r = cm["scale"], cm["offset"], cm["Rw_Q"], cm["Rw_r"]
+    conv_meas, conv_syn, r_g = cm["conv_meas"], cm["conv_syn"], cm["r_g"]
+    G_meas, G_syn, s_r, o_r = (cm["G_meas"], cm["G_syn"], cm["scale_r"],
+                               cm["offset_r"])
     sig_meas = noise_sigma(Q, F_meas)
     sig = args.noise_scale * sig_meas / s          # into synthetic units
     rng = np.random.default_rng(args.seed)
@@ -469,6 +511,154 @@ def _plot_synth(out, Q, conv_meas, conv_syn, sig, r, G_meas, G_syn):
     ax[2].set(xlabel="Q (Å⁻¹)", ylabel="added noise σ(Q)")
     fig.tight_layout()
     fig.savefig(out / "synth_vs_measured.png", dpi=130)
+    plt.close(fig)
+
+
+# ----------------------------------------------------------------------------
+# scan
+# ----------------------------------------------------------------------------
+
+SCAN_METRICS = ("Rw_Q", "Rw_r", "Rw_r_local", "Rw_r_mid")
+
+
+def parabolic_min(x, y):
+    """Minimum of y(x) on a grid, refined by the parabola through the lowest
+    point and its neighbours. Returns (x_min, y_min, on_edge)."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    i = int(np.argmin(y))
+    if i == 0 or i == len(y) - 1:
+        return float(x[i]), float(y[i]), True
+    c = np.polyfit(x[i - 1:i + 2], y[i - 1:i + 2], 2)
+    if c[0] <= 0:
+        return float(x[i]), float(y[i]), False
+    xm = -c[1] / (2 * c[0])
+    return float(xm), float(np.polyval(c, xm)), False
+
+
+def scan_summary(scales, u_extra, grids):
+    """Best scale per metric: at u_extra = 0, per u_extra, and profiled over
+    u_extra (min over the nuisance at each scale). grids: {metric:
+    (n_u, n_s)}. Returns a JSON-ready dict."""
+    out = {}
+    for k in SCAN_METRICS:
+        G = np.asarray(grids[k])
+        per_u = [dict(zip(("scale", "Rw", "on_edge"),
+                          parabolic_min(scales, G[i])))
+                 for i in range(len(u_extra))]
+        prof = G.min(axis=0)
+        iu, js = np.unravel_index(np.argmin(G), G.shape)
+        out[k] = {
+            "no_extra_width": per_u[0] if u_extra[0] == 0 else None,
+            "per_u_extra": {f"{u:g}": v for u, v in zip(u_extra, per_u)},
+            "profiled": dict(zip(("scale", "Rw", "on_edge"),
+                                 parabolic_min(scales, prof))),
+            "grid_best": {"scale": float(scales[js]),
+                          "u_extra_A": float(u_extra[iu]),
+                          "Rw": float(G[iu, js])},
+        }
+    return out
+
+
+def cmd_scan(args):
+    """Forward closure of the published distortion's amplitude.
+
+    For every (scale s, extra width u) the analytic g(r) of the null model
+    with s × (published field, k = 0 removed) as static offsets and u² extra
+    uncorrelated variance, X-ray F(Q), and its distance from the measured
+    F(Q) as RMC sees it (`closure_metrics`). The MLIP model is built once.
+    """
+    import harmonic_pdf as hp
+
+    out = args.outdir
+    out.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    mdl = build_model(args, out)
+    static1, inj = injection_static("published", 1.0, args.keep_gamma,
+                                    args.cif, mdl["atoms0"])
+    scales = np.array([float(x) for x in args.scales.split(",")])
+    u_extra = np.array([float(x) for x in args.u_extra.split(",")])
+    Q, F_meas = md_run.parse_fq(args.data)
+    symbols = list(mdl["ph_mean"].unitcell.symbols)
+    print(f"[3/5] scan: {len(scales)} scales × {len(u_extra)} extra widths "
+          f"(grid {args.grid}³, r ≤ {args.rmax} Å)")
+    grids = {k: np.zeros((len(u_extra), len(scales)))
+             for k in SCAN_METRICS + ("scale",)}
+    F_all = np.zeros((len(u_extra), len(scales), len(Q)))
+    for iu, u in enumerate(u_extra):
+        for js, s in enumerate(scales):
+            t1 = time.time()
+            r, g, _ = hp.harmonic_partials(
+                mdl["ph_mean"], args.temperature, M=args.grid,
+                r_max=args.rmax, dr=args.dr,
+                static=None if s == 0 else s * static1, extra_u2=u * u,
+                log=None)
+            F = md_run.xray_fq(r, g, symbols, Q, mdl["rho0"], mdl["qdamp"])
+            cm = closure_metrics(Q, F_meas, F, mdl["box_len"], mdl["rho0"],
+                                 args.dr)
+            for k in grids:
+                grids[k][iu, js] = cm[k]
+            F_all[iu, js] = F
+            print(f"  u_extra {u:.3f} Å  ×{s:<4g}  Rw(Q) {cm['Rw_Q']:.4f}  "
+                  f"Rw(r) {cm['Rw_r']:.4f} [<5 Å {cm['Rw_r_local']:.4f}, "
+                  f">5 Å {cm['Rw_r_mid']:.4f}]  ({time.time() - t1:.0f} s)")
+
+    print("[4/5] summary")
+    summary = scan_summary(scales, u_extra, grids)
+    for k in SCAN_METRICS:
+        s0, pr, gb = (summary[k]["no_extra_width"], summary[k]["profiled"],
+                      summary[k]["grid_best"])
+        print(f"  {k:10s} best scale: {s0['scale']:.2f} at u_extra = 0 "
+              f"(Rw {s0['Rw']:.4f}{', edge' if s0['on_edge'] else ''}); "
+              f"{pr['scale']:.2f} with the width free (Rw {pr['Rw']:.4f}; "
+              f"grid best ×{gb['scale']:g}, u_extra {gb['u_extra_A']:g} Å)")
+    result = {
+        "purpose": "forward closure of the published P-4̄2₁m distortion's "
+                   "amplitude against the measured F(Q), with an extra "
+                   "uncorrelated width as nuisance",
+        "generated": time.strftime("%Y-%m-%d %H:%M"),
+        "settings": {"grid": args.grid, "r_max_A": args.rmax,
+                     "temperature_K": args.temperature,
+                     "calculator": f"{args.calc}-{args.model}",
+                     "mean_positions": args.mean,
+                     "injected_field": inj["mode"],
+                     "gamma_part": inj["gamma_part"]},
+        "injected_amplitudes_at_scale_1_A": inj["injected_amplitudes_A"]["w8"],
+        "scales": scales.tolist(), "u_extra_A": u_extra.tolist(),
+        "grids": {k: np.round(v, 5).tolist() for k, v in grids.items()},
+        "summary": summary,
+        "runtime_s": round(time.time() - t0, 1),
+    }
+    print("[5/5] outputs")
+    (out / "scan.json").write_text(json.dumps(result, indent=2))
+    np.savez(out / "scan.npz", scales=scales, u_extra=u_extra, Q=Q,
+             F_measured=F_meas, F=F_all,
+             **{k: v for k, v in grids.items()})
+    _plot_scan(out, scales, u_extra, grids, summary)
+    print(f"  wrote {out}/scan.json, scan.npz, scan.png in "
+          f"{time.time() - t0:.0f} s")
+    return 0
+
+
+def _plot_scan(out, scales, u_extra, grids, summary):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    titles = {"Rw_Q": "Rw(Q), box-convolved F(Q)",
+              "Rw_r": "Rw(r), 1.5 Å – L/2",
+              "Rw_r_local": "Rw(r), 1.5–5 Å", "Rw_r_mid": "Rw(r), 5 Å – L/2"}
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    for ax, k in zip(axes.ravel(), SCAN_METRICS):
+        for iu, u in enumerate(u_extra):
+            ax.plot(scales, grids[k][iu], "o-", ms=3, lw=1,
+                    label=f"u_extra = {u:g} Å")
+        pr = summary[k]["profiled"]
+        ax.axvline(pr["scale"], color="k", lw=0.6, ls="--")
+        ax.set(title=titles[k], xlabel="× published distortion",
+               ylabel="Rw")
+    axes[0, 0].legend(fontsize=7)
+    fig.tight_layout()
+    fig.savefig(out / "scan.png", dpi=130)
     plt.close(fig)
 
 
@@ -657,31 +847,43 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    def model_args(s, grid, rmax):
+        s.add_argument("--start", type=Path, required=True,
+                       help="the ideal starting box every RMC chain began "
+                       "from")
+        s.add_argument("--data", type=Path, required=True,
+                       help="measured .fq (Q grid, noise level, closure)")
+        s.add_argument("--dat", type=Path, required=True,
+                       help="the RMCProfile .dat (RESOLUTION_CORRECTION)")
+        s.add_argument("-T", "--temperature", type=float, default=5.0)
+        s.add_argument("--calc", default="mace",
+                       choices=["mace", "chgnet", "emt"])
+        s.add_argument("--model", default="small",
+                       choices=["small", "medium", "large"])
+        s.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+        s.add_argument("--fmax", type=float, default=1e-3)
+        s.add_argument("--symprec", type=float, default=1e-3)
+        s.add_argument("--displacement", type=float, default=0.03)
+        s.add_argument("--fc-dim", type=int, default=4,
+                       help="FC supercell edge in unit cells")
+        s.add_argument("--grid", type=int, default=grid,
+                       help="q-grid / correlation box edge in unit cells")
+        s.add_argument("--rmax", type=float, default=rmax,
+                       help="g(r) range, Å (Qdamp envelope must have died)")
+        s.add_argument("--dr", type=float, default=0.01)
+        s.add_argument("--mean", default="start",
+                       choices=["start", "relaxed"],
+                       help="mean positions of the synthetic crystal: the "
+                       "RMC starting (experimental) positions, or the MLIP "
+                       "minimum")
+        s.add_argument("--keep-gamma", action="store_true",
+                       help="keep the injected field's k = 0 "
+                       "(parent-reference) part")
+        s.add_argument("--cif", type=Path, default=Path("data/GTS_5K.cif"),
+                       help="parent CIF in RMC site-id order (injection)")
+
     s = sub.add_parser("synth", help="synthetic null-model F(Q)")
-    s.add_argument("--start", type=Path, required=True,
-                   help="the ideal starting box every RMC chain began from")
-    s.add_argument("--data", type=Path, required=True,
-                   help="measured .fq (sets the Q grid and the noise level)")
-    s.add_argument("--dat", type=Path, required=True,
-                   help="the RMCProfile .dat (RESOLUTION_CORRECTION)")
-    s.add_argument("-T", "--temperature", type=float, default=5.0)
-    s.add_argument("--calc", default="mace", choices=["mace", "chgnet", "emt"])
-    s.add_argument("--model", default="small",
-                   choices=["small", "medium", "large"])
-    s.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    s.add_argument("--fmax", type=float, default=1e-3)
-    s.add_argument("--symprec", type=float, default=1e-3)
-    s.add_argument("--displacement", type=float, default=0.03)
-    s.add_argument("--fc-dim", type=int, default=4,
-                   help="FC supercell edge in unit cells")
-    s.add_argument("--grid", type=int, default=16,
-                   help="q-grid / correlation box edge in unit cells")
-    s.add_argument("--rmax", type=float, default=120.0,
-                   help="g(r) range, Å (Qdamp envelope must have died)")
-    s.add_argument("--dr", type=float, default=0.01)
-    s.add_argument("--mean", default="start", choices=["start", "relaxed"],
-                   help="mean positions of the synthetic crystal: the RMC "
-                   "starting (experimental) positions, or the MLIP minimum")
+    model_args(s, grid=16, rmax=120.0)
     s.add_argument("--noise-scale", type=float, default=1.0)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--inject", default="none", choices=["none", "published"],
@@ -689,14 +891,22 @@ def main(argv=None):
                    "distortion as static offsets")
     s.add_argument("--inject-scale", type=float, default=1.0,
                    help="multiply the injected field (1 = published)")
-    s.add_argument("--keep-gamma", action="store_true",
-                   help="keep the field's k = 0 (parent-reference) part")
-    s.add_argument("--cif", type=Path, default=Path("data/GTS_5K.cif"),
-                   help="parent CIF in RMC site-id order (for --inject)")
     s.add_argument("-o", "--outdir", type=Path, default=None,
                    help="default results/rmc_control/synth, or "
                    "synth_positive_x<scale> with --inject")
     s.set_defaults(func=cmd_synth)
+
+    s = sub.add_parser("scan", help="forward closure: published-distortion "
+                       "scale (× extra width) vs the measured F(Q)")
+    model_args(s, grid=8, rmax=60.0)
+    s.add_argument("--scales", default="0,0.5,1,1.5,2,2.5,3,3.5,4",
+                   help="comma-separated multiples of the published field")
+    s.add_argument("--u-extra", default="0,0.02,0.04,0.06,0.08",
+                   help="comma-separated extra isotropic uncorrelated "
+                   "displacement, Å rms per component (nuisance width)")
+    s.add_argument("-o", "--outdir", type=Path,
+                   default=Path("results/rmc_control/scale_scan"))
+    s.set_defaults(func=cmd_scan)
 
     s = sub.add_parser("stage", help="NERSC run directory")
     s.add_argument("--synth", type=Path, required=True)

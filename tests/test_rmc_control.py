@@ -279,3 +279,28 @@ def test_gts_injection_known_answer_and_frame_guard():
     with pytest.raises(SystemExit, match="disagree"):
         rc.injection_static("published", 1.0, False, GTS_CIF, shuffled)
     assert rc.injection_static("none", 1.0, False, GTS_CIF, atoms0)[0] is None
+
+
+# ------------------------------------------------------------ scale scan
+
+def test_parabolic_min_refines_and_flags_edges():
+    x = np.arange(0, 4.01, 0.5)
+    xm, ym, edge = rc.parabolic_min(x, (x - 1.3)**2 + 0.2)
+    assert xm == pytest.approx(1.3, abs=1e-9) and ym == pytest.approx(0.2)
+    assert not edge
+    xm, _, edge = rc.parabolic_min(x, -x)            # still falling at 4
+    assert xm == 4.0 and edge
+
+
+def test_scan_summary_profiles_over_the_nuisance():
+    scales = np.arange(0, 3.01, 0.25)
+    u = np.array([0.0, 0.02, 0.04])
+    # Rw(s, u): minimum moves from 2.0 (u=0) to 1.5 (u=0.04), deepest at 0.04
+    G = np.array([(scales - s0)**2 + c for s0, c in ((2.0, 0.3), (1.75, 0.2),
+                                                     (1.5, 0.1))])
+    grids = {k: G for k in rc.SCAN_METRICS}
+    out = rc.scan_summary(scales, u, grids)["Rw_Q"]
+    assert out["no_extra_width"]["scale"] == pytest.approx(2.0)
+    assert out["per_u_extra"]["0.04"]["scale"] == pytest.approx(1.5)
+    assert out["grid_best"] == {"scale": 1.5, "u_extra_A": 0.04, "Rw": 0.1}
+    assert out["profiled"]["scale"] == pytest.approx(1.5, abs=0.05)

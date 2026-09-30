@@ -177,3 +177,20 @@ def test_static_pattern_matches_snapshots_plus_offsets(cu_phonon):
         assert mh == pytest.approx(ms, abs=2e-3)
         assert sh == pytest.approx(ss, rel=0.02)
         assert sh > s0 * 1.05          # the static pattern broadens shells
+
+
+def test_extra_u2_adds_uncorrelated_pair_variance(cu_phonon):
+    """An extra isotropic variance u² per site widens every shell by
+    exactly 2u² in variance (uncorrelated by construction)."""
+    dr, u2 = 0.002, 0.03**2
+    r, g0, _ = hp.harmonic_partials(cu_phonon, 300.0, M=4, r_max=6.0, dr=dr,
+                                    log=None)
+    _, g1, _ = hp.harmonic_partials(cu_phonon, 300.0, M=4, r_max=6.0, dr=dr,
+                                    extra_u2=u2, log=None)
+    m = (r > 2.0) & (r < 3.1)
+    var = []
+    for g in (g0, g1):
+        w = r[m]**2 * g[("Cu", "Cu")][m]
+        mu = (w * r[m]).sum() / w.sum()
+        var.append((w * (r[m] - mu)**2).sum() / w.sum())
+    assert var[1] - var[0] == pytest.approx(2 * u2, rel=0.03)

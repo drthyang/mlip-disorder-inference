@@ -132,7 +132,8 @@ def _cells_within(lattice, r_max):
 
 
 def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
-                      n_sigma=5.0, cutoff=0.01, static=None, log=print):
+                      n_sigma=5.0, cutoff=0.01, static=None, extra_u2=0.0,
+                      log=print):
     """Partial g_ab(r) of the infinite quantum-harmonic crystal.
 
     Parameters
@@ -151,6 +152,10 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
         1×1×2 superstructure). Added to the mean separations; the quantum
         widths and correlations stay those of the parent model (static +
         dynamic disorder, independent). None = no static offsets.
+    extra_u2 : Å², an extra isotropic, UNcorrelated displacement variance
+        per component added to every site's U (a nuisance width: random
+        static disorder, anharmonic or model-stiffness broadening). Adds
+        2·extra_u2 to every pair variance.
 
     Returns
     -------
@@ -170,7 +175,7 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
         key_index[(a, b)] = key_index[(b, a)] = k
 
     q, V, _ = scaled_modes(phonon, M, temperature, cutoff)
-    U = site_covariances(V, masses)
+    U = site_covariances(V, masses) + extra_u2 * np.eye(3)[None]
 
     nbins = int(round(r_max / dr))
     r = dr * np.arange(1, nbins + 1)

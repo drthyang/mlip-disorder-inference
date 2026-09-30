@@ -143,6 +143,22 @@
   (×2) — the data prefer the distortion, and more of it (partly degenerate
   with too-narrow MACE widths). Design, power table and caveats in
   `docs/control-experiment-plan.md`.
+- **`rmc_control.py scan` — forward closure of the distortion amplitude**
+  (no RMC): the MACE null model plus s × the published distortion (k = 0
+  removed) as static offsets, plus an extra isotropic uncorrelated width
+  u_extra as nuisance (`harmonic_pdf.harmonic_partials(extra_u2=...)`,
+  tested to add exactly 2u² to every shell variance), closed against the
+  measured F(Q) as RMC sees it, with Rw also split into G(r) windows
+  1.5–5 Å and 5 Å – L/2 (`closure_metrics`, now shared with `synth` via
+  `build_model`). GTS, s = 0–5 × u_extra = 0–0.08 Å (189 points, 15 min):
+  **the local structure needs ×1.5–1.75 of the single-crystal amplitude**
+  (X5 ≈ 0.19 Å) whatever the width, while **beyond 5 Å an undistorted
+  average + 0.06 Å extra width beats any long-range-ordered distortion**
+  (Rw 0.146 vs 0.217) — short-range order, by forward modeling. F(Q) alone
+  is flat over ×0–1.75. Cross-check: the paper's PDFgui 5 K local fits
+  have a Ta–Ta spread of 0.225–0.229 Å, ours 0.115 (×1) / 0.185 (×1.6) /
+  0.231 (×2). 3 new tests. Details and caveats:
+  `docs/control-experiment-plan.md`.
 
 ### Found
 - **`verdicts.json` v0.1 is not reproducible from committed code.** The

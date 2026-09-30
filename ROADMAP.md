@@ -202,6 +202,14 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
           amplitude); ×1 and ×2 arms staged, 32 chains each
           (`results/rmc_control/positive_x{1,2}_run/`). W4 is
           under-powered at w = 4 (σ_ρ ≈ 1 even at ×2)
+    - [x] **scale scan** (`rmc_control.py scan`, forward closure, no RMC):
+          published-distortion scale × extra uncorrelated width vs the
+          measured data. Local G(r) (1.5–5 Å) needs **×1.5–1.75** of the
+          single-crystal amplitude, robust to the width; beyond 5 Å an
+          undistorted average + 0.06 Å width beats any long-range-ordered
+          distortion — short-range order. The paper's PDFgui local fits
+          carry the same ~×2 (Ta–Ta spread 0.23 vs 0.115 Å at ×1). Next:
+          correlation-length and per-irrep scans
   - [ ] regenerate `verdicts.json` through the committed driver with the
         control-calibrated per-mode noise
 
