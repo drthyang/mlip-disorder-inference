@@ -1,6 +1,6 @@
 # mlip-quantum-thermal — Development Roadmap
 
-*Last updated: 2026-09-29. Self-contained: the Python pipeline computes and
+*Last updated: 2026-09-30. Self-contained: the Python pipeline computes and
 `viewer/` displays. Detached from `rmc-phonon-dynamics` on 2026-07-23; see
 README "Scope pivot".*
 
