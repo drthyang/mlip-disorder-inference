@@ -18,22 +18,29 @@ Pipeline:
     rmc6f ensemble (or --cif)  ->  averaged/symmetrized cell at the
     EXPERIMENTAL lattice (fixed-cell MLIP relax; design D2)
       ->  phonopy finite-displacement force constants on the sampling
-          supercell  ->  snapshots  ->  partial g_ij(r)  ->  neutron-weighted
-          G(r)  ->  F(Q) = S(Q) - 1 on the measured Q grid
+          supercell  ->  snapshots  ->  partial g_ij(r)  ->  per-partial
+          F_ij(Q) (optional Qdamp envelope)  ->  neutron- or X-ray-weighted
+          F(Q) = S(Q) - 1 on the measured Q grid
       ->  scale+offset fit vs measured data (mirrors the RMC treatment)
-      ->  closure.json + gr_sim.dat + sq_sim.dat (+ band_T.yaml via hiPhive)
+      ->  closure.json + gr_sim.dat + sq_sim.dat + gr_partials.npz
+          (+ band_T.yaml via hiPhive)
+
+`--radiation` must match the measurement: X-ray data weighted with neutron
+b_coh misstate Ta contrast ~6× for GaTa4Se8. The X-ray helpers
+(`xray_weights`, `partial_fq`, `xray_fq`, `rmc_box_convolve`) reproduce
+RMCProfile's own forward model exactly; `closure_fit` documents the two
+comparison conventions (raw, and box-matched — the default for X-ray).
 
 Units: Å, eV, THz throughout (phonopy defaults); neutron b_coh in fm
 (Sears 1992); X-ray f0 in electrons (Waasmaier–Kirfel 1995, the table
 RMCProfile embeds). All MLIP evaluations use default_dtype="float64".
 
-The X-ray helpers (`xray_weights`, `partial_fq`, `xray_fq`,
-`rmc_box_convolve`) reproduce RMCProfile's own forward model exactly; the
-CLI closure below still uses neutron weights.
-
 Usage examples:
     python md_run.py sample run_dir/ --skip-nonconverged \\
         --data data/5K_ini/scale_ft_rmc.fq -T 5 -o m2_out
+    python md_run.py sample run_dir/ --skip-nonconverged --exclude AVERAGE \\
+        --data data/5K_ini/scale_ft_rmc.fq --radiation xray \\
+        --qdamp 0.0389 -T 5 -o m2_xray
     python md_run.py sample --cif m2_out/relaxed_expt.cif --data F.fq -T 5
     python md_run.py md run_dir/ --data F.fq -T 300 --md-steps 20000
 """
@@ -359,6 +366,130 @@ def fq_to_gr(Q, F, r, rho0):
 
 
 # ----------------------------------------------------------------------------
+# closure against measured F(Q)
+# ----------------------------------------------------------------------------
+
+RADIATIONS = ("neutron", "xray")
+COMPARISONS = ("raw", "box")
+
+
+def weighted_fq(parts, symbols, Q, radiation):
+    """Total F(Q) = Σ_{a≤b} w_ab F_ab(Q) from partials (see `partial_fq`).
+
+    radiation "neutron": constant Faber–Ziman b_coh weights (`neutron_weights`);
+    "xray": Q-dependent ⟨f⟩²-normalized weights (`xray_weights`, RMCProfile's
+    convention). Q in Å⁻¹; F dimensionless.
+    """
+    if radiation == "neutron":
+        weights, _ = neutron_weights(symbols)
+    elif radiation == "xray":
+        weights, _ = xray_weights(symbols, Q)
+    else:
+        raise ValueError(f"radiation must be one of {RADIATIONS}, "
+                         f"got {radiation!r}")
+    return sum(w * parts[pair] for pair, w in weights.items())
+
+
+def _tabulated(radiation, species):
+    table = BCOH_FM if radiation == "neutron" else XRAY_WK
+    return all(s in table for s in species)
+
+
+def closure_fit(r, g_partials, symbols, rho0, Q, F_data, radiation="neutron",
+                qdamp=0.0, compare="raw", r_min=1.5):
+    """Scale+offset closure of simulated partial g_ab(r) against measured F(Q).
+
+    The simulated total is built per partial — F_ab(Q) from `partial_fq` with
+    the Gaussian Qdamp envelope, then `weighted_fq` — so X-ray weights keep
+    their Q dependence. Two comparison conventions:
+
+    compare="raw" (the original M2 closure): the simulated F(Q) against the
+        measured F(Q) as recorded. The histogram stops at r_cut, so this
+        compares a box-truncated model with instrument-sharp data and the
+        truncation ripple enters Rw(Q). In r, the neutron route compares the
+        histogram G(r) = Σ w_ab (g_ab − 1)·env(r) directly. At qdamp = 0 this
+        is the old closure (identical in r, to rounding in Q).
+    compare="box": both sides pass through the same operators. The data are
+        box-convolved at L = 2·r_cut (`rmc_box_convolve`, RMCProfile's
+        CONVOLVE: G(r) truncated at L/2) and so is the simulation.
+    X-ray weights and compare="box" both take G_sim(r) as the Fourier
+    transform of the simulated F(Q) over the measured Q window, like the data
+    (Q-dependent weights have no single real-space total).
+
+    Parameters
+    ----------
+    r : (nr,) uniform histogram bin centres, Å; the histogram is cut at
+        r_cut = r[-1] + dr/2.
+    g_partials : dict[(a, b)] -> (nr,) partial g_ab(r), a <= b.
+    symbols : per-atom element symbols (only the composition is used).
+    rho0 : total number density, Å⁻³.
+    Q, F_data : measured grid (Å⁻¹, uniform) and F(Q) = S(Q) − 1.
+    radiation : "neutron" | "xray".
+    qdamp : Gaussian resolution damping exp(−(qdamp·r)²/2), Å⁻¹; 0 = off.
+    compare : "raw" | "box".
+    r_min : lower bound of the r-space Rw window, Å.
+
+    Returns
+    -------
+    fit : JSON-ready dict — scale, offset, Rw_Q, Rw_r and the conventions
+        used, plus `variants`: scale/offset/Rw(Q) for every {radiation} ×
+        {raw, box} whose weight table covers the species (same qdamp), which
+        attributes a change in Rw to weighting vs truncation.
+    curves : dict of arrays — "Q", "F_sim" (scaled + offset) and "F_data" as
+        compared; "r", "G_sim" (unscaled) and "G_data" (FT of the data).
+    """
+    if radiation not in RADIATIONS:
+        raise ValueError(f"radiation must be one of {RADIATIONS}, "
+                         f"got {radiation!r}")
+    if compare not in COMPARISONS:
+        raise ValueError(f"compare must be one of {COMPARISONS}, "
+                         f"got {compare!r}")
+    r = np.asarray(r, dtype=float)
+    dr = r[1] - r[0]
+    r_cut = float(r[-1] + 0.5 * dr)
+    box = 2.0 * r_cut
+    species = sorted(set(symbols))
+    parts = partial_fq(r, g_partials, Q, rho0, qdamp)
+    data = {"raw": F_data, "box": rmc_box_convolve(Q, F_data, box, rho0)}
+
+    variants, compared = {}, {}
+    for rad in RADIATIONS:
+        if rad != radiation and not _tabulated(rad, species):
+            continue
+        Fs = weighted_fq(parts, symbols, Q, rad)
+        for how in COMPARISONS:
+            Fc = Fs if how == "raw" else rmc_box_convolve(Q, Fs, box, rho0)
+            s, o, rw = fit_scale_offset(data[how], Fc)
+            variants[f"{rad}_{how}"] = {"scale": s, "offset": o, "Rw_Q": rw}
+            compared[(rad, how)] = (Fs, Fc)
+    Fs, Fc = compared[(radiation, compare)]
+    best = variants[f"{radiation}_{compare}"]
+
+    G_data = fq_to_gr(Q, F_data, r, rho0)
+    if radiation == "neutron" and compare == "raw":
+        G_sim = total_G(r, g_partials, symbols) * np.exp(-0.5 * (qdamp * r)**2)
+        g_route = "weighted histogram"
+    else:
+        G_sim = fq_to_gr(Q, Fs, r, rho0)
+        g_route = "FT of F_sim over the measured Q window"
+    mask = r > r_min
+    _, _, rw_r = fit_scale_offset(G_data[mask], G_sim[mask])
+
+    fit = {"radiation": radiation, "qdamp_A-1": float(qdamp),
+           "compare": compare,
+           "box_length_A": box if compare == "box" else None,
+           "scale": best["scale"], "offset": best["offset"],
+           "Rw_Q": best["Rw_Q"], "Rw_r": rw_r,
+           "r_window_A": [float(r_min), r_cut], "G_sim": g_route,
+           "n_data": len(Q), "Q_range": [float(Q[0]), float(Q[-1])],
+           "variants": variants}
+    curves = {"Q": Q, "F_sim": best["scale"] * Fc + best["offset"],
+              "F_data": data[compare], "r": r, "G_sim": G_sim,
+              "G_data": G_data}
+    return fit, curves
+
+
+# ----------------------------------------------------------------------------
 # structure preparation and harmonic model
 # ----------------------------------------------------------------------------
 
@@ -605,6 +736,17 @@ def main(argv=None):
     ap.add_argument("--dr", type=float, default=0.02, help="G(r) bin, Å")
     ap.add_argument("--data", type=Path, default=None,
                     help="measured .fq file (F(Q)=S(Q)−1) for closure")
+    ap.add_argument("--radiation", default="neutron", choices=RADIATIONS,
+                    help="pair weighting of the simulated F(Q); must match "
+                    "the measurement (default neutron, the original closure)")
+    ap.add_argument("--qdamp", type=float, default=0.0,
+                    help="instrument Qdamp, Å⁻¹: Gaussian envelope "
+                    "exp(−(qdamp·r)²/2) on every partial (RMCProfile's "
+                    "RESOLUTION_CORRECTION); 0 = off")
+    ap.add_argument("--compare", default=None, choices=COMPARISONS,
+                    help="raw = simulated vs measured F(Q) as recorded; box = "
+                    "both box-convolved at L = 2·rmax, the histogram's own "
+                    "truncation (default: box for xray, raw for neutron)")
     ap.add_argument("--no-band-t", action="store_true",
                     help="skip the hiPhive effective-FC fit / band_T.yaml")
     ap.add_argument("--cutoff", type=float, default=6.0,
@@ -619,6 +761,8 @@ def main(argv=None):
 
     if args.cif is None and not args.inputs:
         ap.error("give rmc6f inputs or --cif")
+    if args.compare is None:
+        args.compare = "box" if args.radiation == "xray" else "raw"
     outdir = args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -656,34 +800,48 @@ def main(argv=None):
     print(f"[3/5] G(r) / F(Q)  (rmax = {args.rmax} Å, dr = {args.dr} Å)")
     r, gpart = pair_histograms(frames, symbols, ideal.cell.array,
                                args.rmax, args.dr)
-    G = total_G(r, gpart, symbols)
     rho0 = len(symbols) / ideal.get_volume()
-    print(f"  rho0 = {rho0:.6f} Å⁻³")
+    print(f"  rho0 = {rho0:.6f} Å⁻³;  {args.radiation} weights, "
+          f"qdamp = {args.qdamp} Å⁻¹")
+    species = sorted(set(symbols))
+    np.savez(outdir / "gr_partials.npz", r=r, rho0=rho0,
+             species=np.array(species),
+             counts=np.array([symbols.count(s) for s in species]),
+             **{f"g_{a}_{b}": g for (a, b), g in gpart.items()})
+    tag = (f"{args.radiation}, qdamp {args.qdamp} 1/A, "
+           f"compare {args.compare}; F=S(Q)-1")
 
     fit = None
     if args.data is not None:
         Qd, Fd = parse_fq(args.data)
-        Fs = gr_to_fq(r, G, Qd, rho0)
-        s, o, rw_q = fit_scale_offset(Fd, Fs)
-        Gd = fq_to_gr(Qd, Fd, r, rho0)
-        mask = r > 1.5
-        s_r, o_r, rw_r = fit_scale_offset(Gd[mask], G[mask])
-        fit = {"scale": s, "offset": o, "Rw_Q": rw_q, "Rw_r": rw_r,
-               "n_data": len(Qd), "Q_range": [float(Qd[0]), float(Qd[-1])]}
-        print(f"  closure vs {args.data.name}: scale = {s:.3f}, "
-              f"offset = {o:+.3f}, Rw(Q) = {rw_q:.3f}, Rw(r) = {rw_r:.3f}")
+        fit, cur = closure_fit(r, gpart, symbols, rho0, Qd, Fd,
+                               args.radiation, args.qdamp, args.compare)
+        print(f"  closure vs {args.data.name} ({args.compare}): scale = "
+              f"{fit['scale']:.3f}, offset = {fit['offset']:+.3f}, "
+              f"Rw(Q) = {fit['Rw_Q']:.3f}, Rw(r) = {fit['Rw_r']:.3f}")
+        for k, v in fit["variants"].items():
+            print(f"    {k:12s} Rw(Q) = {v['Rw_Q']:.3f}  scale = "
+                  f"{v['scale']:.3f}")
         np.savetxt(outdir / "sq_sim.dat",
-                   np.column_stack([Qd, s * Fs + o, Fd]),
-                   header="Q(1/A)  F_sim_scaled  F_data   [F=S(Q)-1]")
-        np.savetxt(outdir / "gr_sim.dat", np.column_stack([r, G, Gd]),
-                   header="r(A)  G_sim  G_data_FT   [Faber-Ziman G(r)]")
+                   np.column_stack([Qd, cur["F_sim"], cur["F_data"]]),
+                   header=f"Q(1/A)  F_sim_scaled  F_data   [{tag}]")
+        np.savetxt(outdir / "gr_sim.dat",
+                   np.column_stack([r, cur["G_sim"], cur["G_data"]]),
+                   header=f"r(A)  G_sim  G_data_FT   [G_sim: {fit['G_sim']}]")
     else:
         Qs = np.arange(0.8, 27.0, 0.01)
-        Fs = gr_to_fq(r, G, Qs, rho0)
+        Fs = weighted_fq(partial_fq(r, gpart, Qs, rho0, args.qdamp),
+                         symbols, Qs, args.radiation)
+        if args.radiation == "neutron":
+            G = total_G(r, gpart, symbols) * np.exp(-0.5 * (args.qdamp * r)**2)
+            g_note = "Faber-Ziman G(r)"
+        else:
+            G = fq_to_gr(Qs, Fs, r, rho0)
+            g_note = "FT of F_sim over Q 0.8-27 1/A"
         np.savetxt(outdir / "sq_sim.dat", np.column_stack([Qs, Fs]),
-                   header="Q(1/A)  F_sim   [F=S(Q)-1]")
+                   header=f"Q(1/A)  F_sim   [{tag}]")
         np.savetxt(outdir / "gr_sim.dat", np.column_stack([r, G]),
-                   header="r(A)  G_sim   [Faber-Ziman G(r)]")
+                   header=f"r(A)  G_sim   [{g_note}]")
 
     band_t_delta = None
     if args.mode == "sample" and not args.no_band_t:
@@ -707,6 +865,7 @@ def main(argv=None):
                       "a_lattice": [float(x) for x in atoms.cell.lengths()],
                       "lattice": "free" if args.free_lattice else
                                  "experimental (fixed)",
+                      "symprec": args.symprec,
                       "spacegroup_ladder": ladder},
         "sampling": {"supercell": dim.tolist(),
                      "n_snapshots": len(frames),
@@ -723,7 +882,8 @@ def main(argv=None):
                        "device": args.device, "dtype": "float64"},
     }
     (outdir / "closure.json").write_text(json.dumps(closure, indent=2))
-    print(f"  wrote {outdir}/closure.json, gr_sim.dat, sq_sim.dat"
+    print(f"  wrote {outdir}/closure.json, gr_sim.dat, sq_sim.dat, "
+          "gr_partials.npz"
           + (", band_T.yaml" if band_t_delta is not None else ""))
 
 

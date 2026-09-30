@@ -1,6 +1,53 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed — M2 closure matches the radiation (2026-09-29)
+- **`md_run.py --radiation {neutron,xray}` and `--qdamp`** (defaults
+  neutron / 0: the original closure, unchanged). The simulated F(Q) is now
+  built per partial (`partial_fq` with the Gaussian Qdamp envelope, then
+  `weighted_fq`), so X-ray weights keep RMCProfile's Q dependence.
+  `--compare {raw,box}`: `box` (the X-ray default) box-convolves the data
+  AND the simulation at L = 2·rmax, the histogram's own truncation, with
+  `rmc_box_convolve`; in r both G(r) are then FTs over the measured Q
+  window. `raw` is the original comparison. New pure function
+  `closure_fit`; closure.json records radiation / qdamp / compare /
+  box length, a `variants` grid (Rw(Q) and scale for {neutron, X-ray} ×
+  {raw, box}, attributing any change to weighting vs truncation) and
+  `structure.symprec`; new output `gr_partials.npz` (partial g_ab(r),
+  ρ₀, composition) re-closes offline without resampling.
+  `tests/test_closure_radiation.py` (9 tests: a synthetic CsCl TaSe crystal
+  with analytic partials, data to 60 Å vs a model cut at 20 Å — X-ray box
+  closure recovers scale 1.000 / Rw 0.023, where raw or neutron-weighted
+  comparison reads 0.57 / 0.22; the default reproduces the legacy numbers;
+  species without an X-ray f0 still close under neutron weights) + a slow
+  EMT-Cu CLI test.
+- **Corrected GTS 5 K closure** (`results/m2_gts_5k_xray/`, MACE-MP-0
+  small, 493 configs, 32 quantum snapshots at 5 K, rmax 20 Å): X-ray
+  weights, Qdamp 0.03895 Å⁻¹, box-matched — **Rw(Q) = 0.216, scale 0.743,
+  Rw(r) = 0.418** (M2 recorded 0.74 / 0.63 / 0.58). Attribution, Rw(Q) on
+  the same snapshots:
+
+  | weights | compare | qdamp 0 | qdamp 0.0389 |
+  | --- | --- | --- | --- |
+  | neutron | raw | 0.743 (the M2 value, reproduced) | 0.736 |
+  | neutron | box | 0.546 | 0.531 |
+  | X-ray | raw | 0.633 | 0.624 |
+  | X-ray | box | 0.255 | **0.216** |
+
+  The independent infinite-crystal route (`rmc_control.py synth`, L =
+  82.85 Å) gives 0.248 / 0.40 / scale 0.72. Rw(r) by window: 0.445
+  (1.5–5 Å), 0.348 (5–10), 0.397 (10–20). The largest residual is the
+  null's single Ta–Ta peak at 3.0 Å against the measured 2.95/3.06 Å
+  split; measured peaks are also broader at high Q.
+- **Rerun note: `--symprec 0.01` is required for the GTS fold.** The
+  requested command at the default 1e-3 crashes in phonopy's quantum
+  sampler (`RandomDisplacements._C_to_D` assertion): the 493-config fold
+  reads P1 at 1e-3 (so does the 986-file fold with the AVERAGE files), so
+  `symmetrize` leaves it off-symmetric while phonopy still finds F-4̄3m —
+  force constants inconsistent with the positions. The original M2 run must
+  have used a looser symprec, which closure.json did not record; it does
+  now.
+
 ### Added — RMC control experiment (started 2026-09-29)
 - **RMCProfile's X-ray forward model, pinned exactly** (`md_run.py`:
   `XRAY_WK`, `xray_f0`, `xray_weights`, `partial_fq`, `xray_fq`,
@@ -110,7 +157,7 @@
   `md_run.py` weights its simulated G(r)/F(Q) with neutron b_coh, under
   which Ta has ~6× less relative contrast. The recorded M2 closure
   (Rw(Q) = 0.74, scale 0.63) is therefore partly a weighting mismatch.
-  Not yet rerun — see ROADMAP.
+  Fixed and rerun — see "M2 closure matches the radiation" above.
 
 ### Changed
 - **Renamed `rmc-mlip-phonons` → `mlip-quantum-thermal` (2026-07-26).** The

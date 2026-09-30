@@ -59,15 +59,30 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
       convolution before the residual is fully interpretable); measured G(r)
       peaks systematically broader than the quantum null model = static/
       anharmonic excess. band_T ≈ band (max |Δω| = 0.18 THz at 5 K) —
-      machinery validated on the real system.
-- [ ] closure refinement: instrument-resolution / box-size-matched F(Q)
+      machinery validated on the real system. *(Closure numbers superseded:
+      they are neutron-weighted and box-truncated against X-ray data — see
+      the next item.)*
+- [x] closure refinement: instrument-resolution / box-size-matched F(Q)
       comparison so the null-model residual isolates the distortion.
       **Found 2026-09-29: the GTS F(Q) is X-ray data** (the RMC `.dat` fits
-      `XRAY_RECIPROCAL_SPACE_DATA`), but `md_run.py`'s closure weights with
-      neutron b_coh — Ta carries ~6× more relative contrast in X-rays, so
-      the M2 acceptance Rw(Q) = 0.74 / scale 0.63 are partly a weighting
-      mismatch. The X-ray forward model now exists (`md_run.xray_fq`); the
-      closure CLI still needs a `--radiation` switch and a rerun.
+      `XRAY_RECIPROCAL_SPACE_DATA`), but `md_run.py`'s closure weighted with
+      neutron b_coh — Ta carries ~6× more relative contrast in X-rays.
+      Fixed the same day: `md_run.py --radiation xray --qdamp <Å⁻¹>`
+      transforms each partial with the Gaussian Qdamp envelope, applies
+      RMCProfile's Q-dependent X-ray weights, and compares both sides
+      box-convolved at L = 2·rmax (`--compare box`, the X-ray default), so
+      the histogram's 20 Å truncation is no longer scored as misfit.
+      **Corrected GTS 5 K closure** (493 configs, `--symprec 0.01`,
+      `results/m2_gts_5k_xray/`): **Rw(Q) = 0.216, scale 0.743,
+      Rw(r) = 0.418** (was 0.74 / 0.63 / 0.58). Attribution on the same
+      32 snapshots — Rw(Q) at qdamp 0: neutron raw 0.743 (the recorded
+      value, reproduced), neutron box 0.546, X-ray raw 0.633, X-ray box
+      0.255; Qdamp then takes it to 0.216. Truncation and weighting are
+      each worth ~0.1–0.2 alone and compound together. Agrees with the
+      independent infinite-crystal route (`rmc_control.py synth`: 0.248 /
+      0.40 / scale 0.72). The residual now sits where the distortion
+      should: the null's single Ta–Ta peak at 3.0 Å against the measured
+      2.95/3.06 Å split, and measured peaks broader at high Q.
 
 ## Milestone 3 — experiment-constrained FCs + verdicts
 

@@ -134,3 +134,35 @@ def test_m2_self_closure_rw_is_small(m2_run, tmp_path):
     assert s == pytest.approx(1.0, abs=0.01)
     assert abs(o) < 0.01
     assert rw < 0.01
+
+
+def test_m2_xray_closure_cli(m2_run, tmp_path):
+    """`--radiation xray` end to end. Monatomic Cu has X-ray and neutron
+    weights both ≡ 1, so the neutron run's own F(Q) is exact X-ray data for
+    the same snapshots (same seed): the box-matched default must close to
+    scale 1 / Rw 0, and gr_partials.npz must reproduce closure.json."""
+    arr = np.loadtxt(m2_run / "sq_sim.dat")
+    data = tmp_path / "self.fq"
+    body = "\n".join(f"  {q:.4f}  {f:.10f}" for q, f in arr[:, :2])
+    data.write_text(f"  {len(arr)}\nself-closure\n{body}\n")
+    out = tmp_path / "xray"
+    m2.main(["sample", str(m2_run.parent / "ens"), "--calc", "emt",
+             "-T", "50", "--rmax", "5.0", "--dr", "0.02", "--nsnapshots",
+             "12", "--no-band-t", "--data", str(data), "--radiation", "xray",
+             "-o", str(out)])
+    closure = json.loads((out / "closure.json").read_text())
+    fit = closure["closure_fit"]
+    assert (fit["radiation"], fit["compare"]) == ("xray", "box")
+    assert fit["box_length_A"] == pytest.approx(10.0)
+    assert fit["scale"] == pytest.approx(1.0, abs=1e-4)
+    assert fit["Rw_Q"] < 1e-4 and fit["Rw_r"] < 1e-4
+    assert closure["structure"]["symprec"] == pytest.approx(1e-3)
+
+    z = np.load(out / "gr_partials.npz")
+    symbols = [s for s, n in zip(z["species"], z["counts"]) for _ in range(n)]
+    g = {tuple(k[2:].split("_")): z[k] for k in z.files if k.startswith("g_")}
+    Qd, Fd = m2.parse_fq(data)
+    again, _ = m2.closure_fit(z["r"], g, symbols, float(z["rho0"]), Qd, Fd,
+                              "xray", 0.0, "box")
+    assert again["Rw_Q"] == pytest.approx(fit["Rw_Q"], rel=1e-9, abs=1e-12)
+    assert again["scale"] == pytest.approx(fit["scale"], rel=1e-12)

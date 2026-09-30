@@ -78,7 +78,9 @@ lower bound on correlated noise; see Limitations.
 Rw(Q) = 0.248, Rw(r) = 0.40, scale 0.72. The measured peaks are broader at
 high Q and the 2.95/3.06 Å Ta–Ta split is absent from the null, as expected
 if the static distortion is real. (M2 recorded Rw(Q) = 0.74 for the same null
-model — neutron-weighted and box-truncated; see ROADMAP.)
+model — neutron-weighted and box-truncated. The snapshot route rerun X-ray-
+weighted and box-matched, `md_run.py --radiation xray`, gives 0.216 / 0.418 /
+scale 0.743 at L = 40 Å; see ROADMAP.)
 
 ## The run (`rmc_control.py stage`)
 

@@ -10,7 +10,9 @@ temperature-effective force constants:
 
 1. **Closure**: simulate G(r) and S(Q) from MLIP-sampled configurations and
    compare quantitatively against the measured `scale_ft_rmc.fq`
-   (neutron S(Q), Q = 0.8–27 Å⁻¹, ΔQ = 0.01 Å⁻¹, 2619 points).
+   (S(Q), Q = 0.8–27 Å⁻¹, ΔQ = 0.01 Å⁻¹, 2619 points). **Correction
+   (2026-09-29): these are X-ray data**, not neutron as first written
+   here — see D4.
 2. **`band_T.yaml`**: effective (temperature-renormalized) phonon bands at the
    experimental temperature, as a **new sidecar** — `band.yaml` stays frozen.
 
@@ -62,6 +64,13 @@ unit-testable against analytic cases, matching repo conventions. Neutron
 b_coh from standard tables (Ga 7.288, Ta 6.91, Se 7.97 fm — confirm source).
 Closure metric: Rw over the measured Q-window (same definition RMCProfile
 uses, so numbers are comparable to the RMC fit's own residual).
+
+*Correction (2026-09-29):* the GTS data are X-ray (the RMC `.dat` fits
+`XRAY_RECIPROCAL_SPACE_DATA`, Qdamp 0.0389 Å⁻¹). `md_run.py` now takes
+`--radiation {neutron,xray}` and `--qdamp`; the X-ray route transforms
+each partial and applies RMCProfile's Q-dependent form-factor weights,
+and by default compares both sides box-convolved at L = 2·rmax so the
+histogram's truncation is not scored as misfit (`md_run.closure_fit`).
 
 ## Deliverables
 
