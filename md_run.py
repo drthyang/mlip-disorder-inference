@@ -419,8 +419,15 @@ def sampling_dim(atoms, r_max, fc_target=12.0):
     return np.maximum(dim, 1)
 
 
-def harmonic_model(atoms, calc, dim, displacement, symprec):
-    """Phonopy object with finite-displacement force constants on `dim`."""
+def harmonic_model(atoms, calc, dim, displacement, symprec,
+                   primitive_matrix="auto", compact_fc=False):
+    """Phonopy object with finite-displacement force constants on `dim`.
+
+    primitive_matrix="P" keeps the input cell as phonopy's primitive (e.g.
+    the conventional cell, so q is in conventional reciprocal units —
+    harmonic_pdf.py needs that); compact_fc stores FCs as
+    (n_prim, n_super, 3, 3) instead of the full square array.
+    """
     from phonopy import Phonopy
     from phonopy.structure.atoms import PhonopyAtoms
     from ase import Atoms
@@ -432,7 +439,7 @@ def harmonic_model(atoms, calc, dim, displacement, symprec):
                         cell=atoms.cell.array,
                         scaled_positions=atoms.get_scaled_positions())
     phonon = Phonopy(unit, supercell_matrix=np.diag(dim),
-                     primitive_matrix="auto", symprec=symprec)
+                     primitive_matrix=primitive_matrix, symprec=symprec)
     phonon.generate_displacements(distance=displacement)
     scells = phonon.supercells_with_displacements
     print(f"  {len(scells)} FC displacements on supercell {dim.tolist()} "
@@ -446,7 +453,7 @@ def harmonic_model(atoms, calc, dim, displacement, symprec):
         forces.append(a.get_forces())
         print(f"    FC forces {n}/{len(scells)}  ({time.time()-t0:.1f}s)")
     phonon.forces = np.array(forces)
-    phonon.produce_force_constants()
+    phonon.produce_force_constants(calculate_full_force_constants=not compact_fc)
     return phonon
 
 

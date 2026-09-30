@@ -28,6 +28,19 @@
   W₄ at 0.10 Å reads 0.02, a pure X₅ reads 0.42 with 0.25 in W₄.
   `tests/test_projection_frame.py` (7 known-answer tests incl. an rmc6f
   round trip and a regression guard for the pitfall).
+- **`harmonic_pdf.py`** — partial g_ab(r) of the infinite quantum-harmonic
+  crystal as a lattice sum of per-pair radial Gaussians whose widths carry
+  the displacement–displacement correlations, σ² = d̂ᵀ(U_j + U_j' − Σ − Σᵀ)d̂,
+  with Σ_jj'(R) summed by FFT over the q-grid commensurate with an M³ box of
+  the unit cell (phonopy eigenvectors, (ħ/ω)(n_B + ½) quantum weights,
+  pairs outside the minimum-image cube uncorrelated). Validated on EMT fcc
+  Cu (`tests/test_harmonic_pdf.py`, 5 tests): every Σ block equals
+  phonopy's `RandomDisplacements.run_correlation_matrix` to 1e-12 (actual
+  7e-19), and coordination numbers, shell positions and correlated shell
+  widths match sampled quantum snapshots (first-shell σ 0.0868 vs 0.0867 Å,
+  vs 0.106 Å uncorrelated). `md_run.harmonic_model` gains
+  `primitive_matrix` / `compact_fc` (defaults unchanged); note that in
+  phonopy ≥ 4 `primitive_matrix=None` means "auto" — the identity is `"P"`.
 
 ### Found
 - **`verdicts.json` v0.1 is not reproducible from committed code.** The

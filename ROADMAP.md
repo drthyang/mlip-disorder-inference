@@ -159,8 +159,12 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
         from every reconstruction tried (X5 w4: published 0.3012, committed
         0.3225). Regenerate it through this driver (needs the quantum
         baseline recomputed in the same frame).
-  - [ ] synthetic null F(Q): analytic quantum-harmonic G(r) of the
-        infinite crystal (correlated widths), X-ray weighted
+  - [x] `harmonic_pdf.py`: analytic quantum-harmonic partial g(r) of the
+        infinite crystal — correlated pair widths from phonon eigenvectors
+        on an M³ q-grid via FFT, no box, no sampling noise. Correlations
+        equal phonopy's own supercell ⟨uuᵀ⟩ to 1e-18; shells match sampled
+        quantum snapshots (coordination exact, widths to 0.2 %).
+  - [ ] synthetic null F(Q) for GTS (`rmc_control.py synth`)
   - [ ] staged Perlmutter run directory (mirrors the original 500-chain run)
   - [ ] RMCProfile runs (user, NERSC) → `rmc_control.py compare`
 
