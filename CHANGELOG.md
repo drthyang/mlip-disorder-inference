@@ -60,6 +60,14 @@
   With X-ray weighting and no box truncation, the null model sits at
   Rw(Q) = 0.248 / Rw(r) = 0.40 from the measured data (M2 recorded 0.74 /
   0.58 neutron-weighted).
+- **Static offsets in `harmonic_pdf.harmonic_partials`** (`static=`, a
+  (p1, p2, p3, n, 3) Å field periodic over p unit cells): the mean
+  separations carry a static superstructure while widths and correlations
+  stay the parent's quantum ones — the construction the positive-control
+  arm needs (MACE cannot host the distorted phase, probe D). Tests: a
+  uniform offset changes nothing (1e-9); a 1×1×2 Cu pattern matches
+  phonopy snapshots with the same offsets added (shell counts, positions,
+  widths to 2 %).
 
 ### Found
 - **`verdicts.json` v0.1 is not reproducible from committed code.** The

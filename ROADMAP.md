@@ -174,6 +174,9 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
   - [ ] RMCProfile runs (user, NERSC) → `rmc_control.py compare`
   - [ ] positive-control arm (published P-4̄2₁m distortion + quantum
         motion: RMC's recovery of a known amplitude)
+    - [x] `harmonic_pdf.harmonic_partials(static=...)`: periodic static
+          offsets on top of the parent's quantum widths/correlations;
+          matches snapshots-plus-offsets (widths to 2 %)
   - [ ] regenerate `verdicts.json` through the committed driver with the
         control-calibrated per-mode noise
 

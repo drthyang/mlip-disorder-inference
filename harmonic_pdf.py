@@ -7,7 +7,9 @@ between the displacements of different atoms (which sharpens near-neighbour
 peaks). Evaluated as a lattice sum of per-pair radial Gaussians — no finite
 box, no sampling noise — so it stands in for what a diffractometer sees from
 the null model. Used by rmc_control.py to synthesize zero-static-disorder
-total-scattering data for the RMC control experiment.
+total-scattering data for the RMC control experiment and, with periodic
+`static` offsets added to the mean positions, data carrying a KNOWN static
+distortion on top of the same quantum motion (the positive-control arm).
 
 Physics. For atom j in cell 0 and atom j' in cell R, the relative
 displacement is Gaussian with covariance
@@ -130,7 +132,7 @@ def _cells_within(lattice, r_max):
 
 
 def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
-                      n_sigma=5.0, cutoff=0.01, log=print):
+                      n_sigma=5.0, cutoff=0.01, static=None, log=print):
     """Partial g_ab(r) of the infinite quantum-harmonic crystal.
 
     Parameters
@@ -144,6 +146,11 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
         M-box and dropped beyond (Σ → 0, uncorrelated widths).
     r_max, dr : Å. Grid r_k = k·dr, k = 1..r_max/dr (RMCProfile's grid).
     n_sigma : kernel half-width in σ.
+    static : optional (p1, p2, p3, n, 3) array, Å — a STATIC displacement of
+        every site, periodic with period (p1, p2, p3) unit cells (e.g. a
+        1×1×2 superstructure). Added to the mean separations; the quantum
+        widths and correlations stay those of the parent model (static +
+        dynamic disorder, independent). None = no static offsets.
 
     Returns
     -------
@@ -170,27 +177,40 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
     counts = np.zeros((len(pair_keys), nbins))
     cells = _cells_within(lattice, r_max)
     half = M // 2
+    if static is None:
+        static = np.zeros((1, 1, 1, n, 3))
+    static = np.asarray(static, dtype=float)
+    period = np.array(static.shape[:3])
+    if static.shape[3:] != (n, 3):
+        raise ValueError(f"static must be (p1, p2, p3, {n}, 3), got "
+                         f"{static.shape}")
+    subcells = np.stack(np.meshgrid(*[np.arange(k) for k in period],
+                                    indexing="ij"), -1).reshape(-1, 3)
     n_pairs = 0
     for j in range(n):
         row = row_correlations(q, V, frac, masses, j, M)
-        dfrac = cells[:, None, :] + frac[None, :, :] - frac[j]     # (C, n, 3)
-        dcart = dfrac @ lattice
-        dist = np.linalg.norm(dcart, axis=-1)
-        keep = (dist > 1e-6) & (dist <= r_max)
-        ci, jp = np.nonzero(keep)
-        d = dist[ci, jp]
-        dhat = dcart[ci, jp] / d[:, None]
-        C = U[j][None] + U[jp]
-        nc = cells[ci]
-        corr = np.all(np.abs(nc) < half, axis=1)
-        idx = np.mod(nc[corr], M)
-        Sg = row[idx[:, 0], idx[:, 1], idx[:, 2], jp[corr]]
-        C[corr] -= Sg + np.transpose(Sg, (0, 2, 1))
-        sig = np.sqrt(np.einsum("pi,pij,pj->p", dhat, C, dhat))
+        dcart0 = (cells[:, None, :] + frac[None, :, :] - frac[j]) @ lattice
         site_key = np.array([key_index[(symbols[j], b)] for b in symbols])
-        _accumulate(counts, r, dr, d, sig, site_key[jp], n_sigma)
-        n_pairs += len(d)
+        for c in subcells:                       # atom j sits in sub-cell c
+            tgt = np.mod(c + cells, period)                        # (C, 3)
+            dcart = (dcart0 + static[tgt[:, 0], tgt[:, 1], tgt[:, 2]]
+                     - static[c[0], c[1], c[2], j])
+            dist = np.linalg.norm(dcart, axis=-1)
+            keep = (dist > 1e-6) & (dist <= r_max)
+            ci, jp = np.nonzero(keep)
+            d = dist[ci, jp]
+            dhat = dcart[ci, jp] / d[:, None]
+            C = U[j][None] + U[jp]
+            nc = cells[ci]
+            corr = np.all(np.abs(nc) < half, axis=1)
+            idx = np.mod(nc[corr], M)
+            Sg = row[idx[:, 0], idx[:, 1], idx[:, 2], jp[corr]]
+            C[corr] -= Sg + np.transpose(Sg, (0, 2, 1))
+            sig = np.sqrt(np.einsum("pi,pij,pj->p", dhat, C, dhat))
+            _accumulate(counts, r, dr, d, sig, site_key[jp], n_sigma)
+            n_pairs += len(d)
     del V
+    counts /= len(subcells)                      # per parent unit cell
 
     vol = abs(np.linalg.det(lattice))
     shell = 4.0 * np.pi * r**2 * dr
@@ -201,11 +221,12 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
         g[(a, b)] = vol * counts[k] / (n_ord * shell)
     u_rms = np.sqrt(np.trace(U, axis1=1, axis2=2) / 3.0)
     if log:
-        log(f"  harmonic g(r): {n} sites, M = {M}, T = {temperature} K, "
+        log(f"  harmonic g(r): {n} sites × {len(subcells)} static "
+            f"sub-cells, M = {M}, T = {temperature} K, "
             f"{n_pairs} pairs to {r_max} Å; u_rms per component "
             f"{u_rms.min():.4f}–{u_rms.max():.4f} Å")
     return r, g, {"U": U, "u_rms": u_rms, "n_pairs": n_pairs,
-                  "pair_keys": pair_keys}
+                  "pair_keys": pair_keys, "static_period": period.tolist()}
 
 
 def _accumulate(counts, r, dr, d, sig, kidx, n_sigma, chunk=200_000):

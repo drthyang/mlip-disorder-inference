@@ -118,3 +118,62 @@ def test_needs_unit_cell_as_primitive():
     ph = md_run.harmonic_model(at, EMT(), np.array([2, 2, 2]), 0.01, 1e-3)
     with pytest.raises(ValueError, match="primitive_matrix"):
         hp.scaled_modes(ph, 2, 5.0)
+
+
+# ------------------------------------------------------ static offsets
+
+def _cu_static(delta=0.05):
+    """A 1×1×2 static pattern on the 4 Cu sites: site-dependent vectors,
+    sign alternating between even and odd cells along z. Å."""
+    v = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]], float)
+    v /= np.linalg.norm(v, axis=1)[:, None]
+    s = np.zeros((1, 1, 2, 4, 3))
+    s[0, 0, 0] = delta * v
+    s[0, 0, 1] = -delta * v
+    return s
+
+
+def test_uniform_static_offset_changes_nothing(cu_phonon):
+    r, g0, _ = hp.harmonic_partials(cu_phonon, 5.0, M=4, r_max=8.0, log=None)
+    shift = np.broadcast_to([0.03, -0.02, 0.05], (1, 1, 2, 4, 3))
+    _, g1, info = hp.harmonic_partials(cu_phonon, 5.0, M=4, r_max=8.0,
+                                       static=shift, log=None)
+    assert info["static_period"] == [1, 1, 2]
+    assert np.abs(g1[("Cu", "Cu")] - g0[("Cu", "Cu")]).max() < 1e-9
+
+
+def test_static_pattern_matches_snapshots_plus_offsets(cu_phonon):
+    """Static + quantum: the analytic g(r) with a 1x1x2 static pattern equals
+    pair histograms of phonopy quantum snapshots with the same offsets
+    added atom by atom (the independent construction)."""
+    T, dr, r_max = 300.0, 0.005, 7.0
+    static = _cu_static()
+    r, g, _ = hp.harmonic_partials(cu_phonon, T, M=4, r_max=r_max, dr=dr,
+                                   static=static, log=None)
+    snaps, ideal = md_run.quantum_snapshots(cu_phonon, 300, T, seed=2)
+    frac = np.asarray(cu_phonon.unitcell.scaled_positions)
+    spos = ideal.get_scaled_positions() * 4
+    site = np.array([int(np.argmin((((p - frac + 0.5) % 1 - 0.5)**2).sum(1)))
+                     for p in spos])
+    cz = np.rint(spos[:, 2] - frac[site, 2]).astype(int) % 2
+    offs = static[0, 0, cz, site]
+    rs, gs = md_run.pair_histograms([s.get_positions() + offs for s in snaps],
+                                    ideal.get_chemical_symbols(),
+                                    ideal.cell.array, r_max, dr)
+    _, g_plain, _ = hp.harmonic_partials(cu_phonon, T, M=4, r_max=r_max,
+                                         dr=dr, log=None)
+    rho, n_box = 4 / A_CU**3, len(ideal)
+    for lo, hi in [(2.0, 2.95), (3.2, 4.1), (4.1, 4.8)]:
+        stats = []
+        for rr, gg in ((r, g[("Cu", "Cu")]), (rs, gs[("Cu", "Cu")]),
+                       (r, g_plain[("Cu", "Cu")])):
+            m = (rr > lo) & (rr < hi)
+            w = 4 * np.pi * rho * rr[m]**2 * gg[m] * dr
+            mu = (w * rr[m]).sum() / w.sum()
+            stats.append((w.sum(), mu,
+                          np.sqrt((w * (rr[m] - mu)**2).sum() / w.sum())))
+        (nh, mh, sh), (ns, ms, ss), (_, _, s0) = stats
+        assert ns * (n_box - 1) / n_box == pytest.approx(nh, rel=5e-3)
+        assert mh == pytest.approx(ms, abs=2e-3)
+        assert sh == pytest.approx(ss, rel=0.02)
+        assert sh > s0 * 1.05          # the static pattern broadens shells
