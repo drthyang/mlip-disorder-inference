@@ -544,7 +544,11 @@ def random_signs(n, rng):
 
 
 def load_rmc_config(path: Path, n_header_stop: str = "atoms"):
-    """(unit_frac (N,3) cubic-unit-cell frame, sid (N,), ijk (N,3))."""
+    """(unit_frac (N,3) cubic-unit-cell frame, sid (N,), ijk (N,3)).
+
+    NOTE: the result is in the RMC (CIF) frame, not the pattern frame the
+    projector is built in — see `to_aligned_frame` before projecting.
+    """
     with open(path) as fh:
         for n, line in enumerate(fh):
             if line.strip().lower().startswith(n_header_stop):
@@ -552,3 +556,202 @@ def load_rmc_config(path: Path, n_header_stop: str = "atoms"):
     arr = np.loadtxt(path, skiprows=n + 1, usecols=(3, 4, 5, 6, 7, 8, 9))
     unit = (arr[:, 0:3] * 8.0) % 1.0
     return unit, arr[:, 3].astype(int), arr[:, 4:7].astype(int)
+
+
+# ----------------------------------------------------------------------------
+# ensemble driver: RMC frame -> pattern frame -> windowed projections
+# ----------------------------------------------------------------------------
+
+DEFAULT_CIF = REPO / "data/GTS_5K.cif"
+WINDOWS = (2, 4, 8)
+
+
+def projection_setup(cif: Path = DEFAULT_CIF, ref_path: Path = REF_JSON):
+    """Build everything needed to project RMC configurations.
+
+    The published patterns live in the refined structure's setting, which
+    differs from the RMC/CIF frame by a parent rotation R and an origin
+    shift t (for GTS: an axis permutation with signs and half a cubic cell —
+    not a parent translation). `align_parent_frame` finds (R, t) with site
+    labels kept: aligned[s] = (R·ideal[s] + t) mod 1. The projector is built
+    in the aligned frame, so every config must be mapped there first
+    (`to_aligned_frame`); projecting RMC-frame coordinates directly scrambles
+    channels (a pure W₄ at 0.10 Å reads 0.02 — tests/test_projection_frame).
+
+    Parameters
+    ----------
+    cif : P1 CIF of the cubic parent whose atom order is the RMC site-id
+        order (1..52) — data/GTS_5K.cif for GTS.
+    ref_path : the mode-pattern reference JSON.
+
+    Returns
+    -------
+    dict with keys: elem (52 symbols), ideal (52,3) idealized parent in the
+    RMC frame, aligned (52,3) in the pattern frame, R (3,3) int, shift (3,)
+    cubic fractional, n_site (52,3) int = floor(R·ideal + shift), fields
+    ({mode: (104,3) Å}), projector, keys, a_ref (tetragonal a, Å).
+    """
+    from ase.io import read
+
+    ref = load_reference(ref_path)
+    a, c = ref["cell"]["a_A"], ref["cell"]["c_A"]
+    at = read(str(cif))
+    elem = at.get_chemical_symbols()
+    ideal = idealize_parent(at.get_scaled_positions() % 1.0, elem)
+    refined, refined_elem = expand_refined(ref, a, c)
+    aligned, (R, t_tet), _ = align_parent_frame(ideal, elem, refined,
+                                                refined_elem, a, c)
+    R = np.rint(R).astype(int)
+    shift = np.asarray(t_tet) * np.array([1.0, 1.0, 2.0])
+    n_site = np.floor(ideal @ R.T + shift + 1e-9).astype(int)
+    slab = build_slab(aligned)
+    slab_elem = list(elem) * 2
+    D = displacement_field(slab, slab_elem, refined, refined_elem, a, c)
+    mapping, orbits = map_labels_to_orbits(ref, slab, slab_elem, D, a, c)
+    fields = expand_patterns(ref, slab, slab_elem, mapping, orbits, a, c)
+    proj = build_projector(fields, aligned, elem)
+    return {"elem": elem, "ideal": ideal, "aligned": aligned, "R": R,
+            "shift": shift, "n_site": n_site, "fields": fields,
+            "projector": proj, "keys": proj["keys"], "a_ref": a}
+
+
+def read_rmc6f_box(path: Path):
+    """Positions of an 8×8×8 rmc6f box in conventional-cell units.
+
+    Returns (X (N,3) in [0,8), sid (N,) site ids 1..52, ijk (N,3) the
+    reference-cell offsets from the file, a_cub Å, moves_generated int).
+    """
+    header = {}
+    with open(path) as fh:
+        for n, line in enumerate(fh):
+            low = line.strip().lower()
+            if low.startswith("atoms"):
+                break
+            if ":" in line:
+                k, v = line.split(":", 1)
+                header[k.strip().lower()] = v.split()
+    dims = np.array(header["supercell dimensions"][:3], dtype=int)
+    if not np.all(dims == 8):
+        raise ValueError(f"{path}: projector assumes an 8x8x8 box, got {dims}")
+    cell_len = float(header["cell (ang/deg)"][0])
+    moves = int(header.get("number of moves generated", ["-1"])[0])
+    arr = np.loadtxt(path, skiprows=n + 1, usecols=(3, 4, 5, 6, 7, 8, 9))
+    return (arr[:, 0:3] * dims, arr[:, 3].astype(int),
+            arr[:, 4:7].astype(int), cell_len / dims[0], moves)
+
+
+def to_aligned_frame(X, sid, ijk, setup):
+    """Map a box from the RMC frame into the pattern (aligned) frame.
+
+    X' = R·X + shift (mod 8) and ijk' = R·ijk + n_site[s] (mod 8), so each
+    atom keeps its site label and its displacement from its own reference
+    cell is rotated, d' = R·d. Returns (unit_frac (N,3), ijk' (N,3)) for
+    `parity_sums` / `window_parity_sums` with mean_site = setup['aligned'].
+    """
+    R, shift, n_site = setup["R"], setup["shift"], setup["n_site"]
+    Xp = (np.asarray(X) @ R.T + shift) % 8.0
+    ijkp = (np.asarray(ijk) @ R.T + n_site[np.asarray(sid) - 1]) % 8
+    return Xp % 1.0, ijkp.astype(int)
+
+
+def config_amplitudes(X, sid, ijk, a_cub, setup, windows=WINDOWS, rng=None):
+    """Windowed irrep amplitudes of one box, measured and random-sign null.
+
+    Returns {f"w{w}": (n_windows, n_keys), f"null_w{w}": (n_windows, n_keys)}
+    in Å (published per-primitive-cell convention), key order setup['keys'].
+    """
+    rng = np.random.default_rng(0) if rng is None else rng
+    unit, ijkp = to_aligned_frame(X, sid, ijk, setup)
+    proj, keys, mean = setup["projector"], setup["keys"], setup["aligned"]
+    signs = random_signs(len(sid), rng)
+    out = {}
+    for w in windows:
+        for tag, sg in (("w", None), ("null_w", signs)):
+            S_w = window_parity_sums(unit, sid, ijkp, mean, a_cub, w, signs=sg)
+            amp = project_all_windows(S_w, proj, w)
+            out[f"{tag}{w}"] = np.column_stack([amp[k] for k in keys])
+    return out
+
+
+def ensemble_amplitudes(files, setup, windows=WINDOWS, seed=0, log=print):
+    """Frame-correct windowed projections of a list of rmc6f boxes.
+
+    Returns a dict ready for np.savez: keys, files, moves, and per scale w
+    the full window arrays amp_w{w} / null_w{w} (n_cfg, n_windows, n_keys)
+    plus the per-config RMS over windows rms_w{w} / rms_null_w{w}
+    (n_cfg, n_keys) — the objects `verdicts.assemble` consumes. Units Å.
+    """
+    rng = np.random.default_rng(seed)
+    acc = {}
+    moves = []
+    for n, f in enumerate(files, 1):
+        X, sid, ijk, a_cub, mv = read_rmc6f_box(Path(f))
+        moves.append(mv)
+        for k, v in config_amplitudes(X, sid, ijk, a_cub, setup, windows,
+                                      rng).items():
+            acc.setdefault(k, []).append(v)
+        if log and (n % 50 == 0 or n == len(files)):
+            log(f"  projected {n}/{len(files)}")
+    out = {"keys": np.array(setup["keys"]),
+           "files": np.array([Path(f).name for f in files]),
+           "moves": np.array(moves)}
+    for w in windows:
+        amp = np.array(acc[f"w{w}"])
+        nul = np.array(acc[f"null_w{w}"])
+        out[f"amp_w{w}"], out[f"null_w{w}"] = amp, nul
+        out[f"rms_w{w}"] = np.sqrt((amp**2).mean(axis=1))
+        out[f"rms_null_w{w}"] = np.sqrt((nul**2).mean(axis=1))
+    return out
+
+
+def main(argv=None):
+    """CLI: frame-correct windowed projections of an rmc6f ensemble -> npz."""
+    import argparse
+
+    import milestone1_bands as m1
+
+    ap = argparse.ArgumentParser(description="Windowed irrep projections of "
+                                 "an 8x8x8 RMC ensemble (pattern frame).")
+    ap.add_argument("inputs", nargs="+", help=".rmc6f files or directories")
+    ap.add_argument("--cif", type=Path, default=DEFAULT_CIF,
+                    help="P1 parent CIF in RMC site-id order")
+    ap.add_argument("--exclude", default="AVERAGE",
+                    help="drop files whose NAME matches this regex")
+    ap.add_argument("--skip-nonconverged", action="store_true")
+    ap.add_argument("--drop", default="",
+                    help="comma-separated config numbers to drop (e.g. "
+                    "duplicate chains 206,404,208)")
+    ap.add_argument("--seed", type=int, default=0, help="random-sign seed")
+    ap.add_argument("-o", "--out", type=Path, default=Path("projections.npz"))
+    args = ap.parse_args(argv)
+
+    files = m1.collect_inputs(args.inputs)
+    if args.exclude:
+        files = [f for f in files if not re.search(args.exclude, f.name)]
+    if args.skip_nonconverged:
+        files, dropped = m1.drop_nonconverged(files)
+        print(f"  dropped {len(dropped)} non-converged config(s)")
+    drop = {int(x) for x in args.drop.split(",") if x.strip()}
+    if drop:
+        def num(f):
+            m = re.search(r"_(\d+)\.rmc6f$", f.name)
+            return int(m.group(1)) if m else None
+        files = [f for f in files if num(f) not in drop]
+    print(f"[1/2] projector ({args.cif.name}); {len(files)} configs")
+    setup = projection_setup(args.cif)
+    print("[2/2] windowed projections, windows", WINDOWS)
+    out = ensemble_amplitudes(files, setup, seed=args.seed)
+    np.savez(args.out, **out)
+    for w in WINDOWS:
+        a = np.sqrt((out[f"rms_w{w}"]**2).mean(axis=0))
+        n = np.sqrt((out[f"rms_null_w{w}"]**2).mean(axis=0))
+        print(f"  w={w}: " + "  ".join(
+            f"{k} {x:.4f}/{y:.4f}" for k, x, y in zip(setup["keys"], a, n))
+            + "   (measured/null, Å)")
+    print(f"  wrote {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

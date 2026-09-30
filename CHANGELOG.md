@@ -16,7 +16,29 @@
   be the infinite-crystal F(Q), written unconvolved.
   `tests/test_xray_forward.py` (13 tests; 3 need the private data).
 
+- **Frame-correct ensemble projection driver** (`mode_project.py`:
+  `projection_setup`, `read_rmc6f_box`, `to_aligned_frame`,
+  `config_amplitudes`, `ensemble_amplitudes`, and a CLI writing an npz with
+  per-window measured and random-sign-null amplitudes at w = 2/4/8). The
+  published patterns are anchored in the refined structure's setting, which
+  differs from the RMC/CIF frame by a parent rotation (an axis permutation
+  with signs) and a half-cell origin shift; every box is mapped into that
+  frame (X' = R·X + t, ijk' = R·ijk + n_site) before projecting. Projecting
+  RMC-frame coordinates directly scrambles the channels — a pure injected
+  W₄ at 0.10 Å reads 0.02, a pure X₅ reads 0.42 with 0.25 in W₄.
+  `tests/test_projection_frame.py` (7 known-answer tests incl. an rmc6f
+  round trip and a regression guard for the pitfall).
+
 ### Found
+- **`verdicts.json` v0.1 is not reproducible from committed code.** The
+  scratch driver that produced its windowed amplitudes was never
+  committed. The committed driver gives, for the same 490 configs at w = 4,
+  X₅ 0.3225 / W₄ 0.1807 / Γ₃ 0.2035 / Γ₁ 0.1429 / X₃ 0.0760 / Δ 0.0532 Å vs
+  the published 0.3012 / 0.1684 / 0.1893 / 0.1357 / 0.0757 / 0.0543; no
+  reconstruction tried (RMC vs aligned frame, RMS vs mean over windows,
+  ideal vs ensemble-mean reference) matches exactly. The random-sign nulls
+  agree to <1 %. The verdicts should be regenerated through the committed
+  driver; the quantum baseline must then be recomputed in the same frame.
 - **The GTS total-scattering data are X-ray, but the M2 closure is
   neutron-weighted.** The RMC `.dat` fits `XRAY_RECIPROCAL_SPACE_DATA`;
   `md_run.py` weights its simulated G(r)/F(Q) with neutron b_coh, under

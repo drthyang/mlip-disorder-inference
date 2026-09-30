@@ -149,7 +149,16 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
         **Gaussian** Qdamp envelope, and CONVOLVE = G(r) truncation of the
         *data* at L/2 — each reproduced from RMCProfile's own output files
         to ≤5e-8 (the data column to Rw 0.001).
-  - [ ] frame-correct ensemble projection driver in `mode_project.py`
+  - [x] frame-correct ensemble projection driver (`python mode_project.py
+        <ensemble> -o proj.npz`): maps every box from the RMC frame into the
+        pattern frame (parent rotation + half-cell shift) before projecting;
+        known-answer tests through an rmc6f round trip. The 490-config
+        measured ensemble now projects reproducibly in 23 s. **`verdicts.json`
+        (v0.1) cannot be regenerated from committed code** — its scratch
+        driver was never committed and its measured amplitudes sit 2–7 %
+        from every reconstruction tried (X5 w4: published 0.3012, committed
+        0.3225). Regenerate it through this driver (needs the quantum
+        baseline recomputed in the same frame).
   - [ ] synthetic null F(Q): analytic quantum-harmonic G(r) of the
         infinite crystal (correlated widths), X-ray weighted
   - [ ] staged Perlmutter run directory (mirrors the original 500-chain run)
