@@ -213,7 +213,75 @@ difference not scanned). The X-ray weights are Ta-dominated. Systematic
 model error dominates the misfit, so the minima carry flatness ranges, not
 statistical intervals.
 
-**Consequences.** The ×1 and ×2 positive arms bracket the local amplitude.
+## Domain-size scan (`rmc_control.py scan --xi ...`)
+
+This extends the scale scan with a third axis: the distortion is coherent
+only within domains of correlation length ξ. A pair at ideal separation d
+lies in one domain with probability P = exp(−d/ξ) (isotropic Poisson domain
+walls) and then carries the coherent single-variant geometry. Otherwise its
+atoms belong to independent, uniformly random domain variants — the
+distortion's 24 states (arm × orientation × phase, ×2 cell parities:
+`mode_project.variant_static_set`). Pair statistics are all g(r) needs, so
+the model stays analytic (`harmonic_partials(domain_xi=, incoherent_cov=)`).
+It is exact except for one approximation: the random-variant mixture is
+treated as a Gaussian with its per-site covariance
+(`incoherent_covariance`). Against the exact 24 × 24-state mixture on GTS
+(×1.6, fully incoherent, r ≤ 16 Å), that approximation is off by Rw 0.03 in
+G(r), but it moves the closure metrics by ≤ 0.006 (Rw(Q) 0.0007), well
+below the differences resolved here. Limits are tested: ξ = ∞ is the scale
+scan exactly; ξ → 0 equals an extra width of the variant covariance.
+
+Grid: ξ ∈ {2.5, 3.5, 5, 7.5, 10, 15, 20, 30, 50, 100, ∞} Å × scale 0.5–3
+× u_extra 0–0.08 Å (605 points; 24 min on 8 threads with the model's
+correlations cached, `harmonic_pdf.prepare_model`).
+`results/rmc_control/domain_scan/`.
+
+Best Rw per window, minimized over scale and u_extra at each ξ:
+
+| ξ (Å) | 2.5 | 5 | 7.5 | 10 | 15 | 30 | 100 | ∞ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| G(r) 1.5–5 Å | 0.239 | 0.209 | 0.203 | 0.201 | 0.200 | 0.199 | 0.200 | 0.200 |
+| G(r) 5 Å – L/2 | 0.147 | 0.147 | 0.147 | 0.147 | 0.147 | 0.147 | 0.147 | 0.147 |
+| G(r) total, one parameter set | 0.214 | 0.199 | 0.195 | **0.194** | 0.196 | 0.197 | 0.200 | 0.203 |
+| F(Q) | 0.103 | 0.103 | 0.104 | 0.104 | 0.104 | 0.104 | 0.104 | 0.105 |
+
+**Reading.**
+
+1. **The distortion is coherent over at least ~10 Å.** The local window
+   degrades steadily below ξ ≈ 10 Å (0.201 → 0.239 at 2.5 Å): neighbouring
+   clusters must share the variant. It is not scrambled cluster by cluster.
+2. **No upper bound from these data.** The medium-range window is exactly
+   flat in ξ, because its optimum always sits at the smallest scale scanned
+   (×0.5) plus 0.06 Å of isotropic extra width. So 5–41 Å carries no
+   detectable signature of the published pattern, coherent or scrambled.
+   Randomly oriented copies of the distortion do not supply the broadening
+   it needs either: at ×1.75 they give ≈ 0.04 Å (Ta, Se), anisotropic and
+   site-specific, against 0.06 Å isotropic.
+3. **One model cannot satisfy both windows.** The joint best, ξ ≈
+   7.5–15 Å at ×2 with 0.02 Å width (total 0.194 vs 0.203 for long-range
+   order), reaches neither window's own optimum (local 0.214 vs 0.199,
+   medium 0.168 vs 0.147). The family "scaled published pattern + domains +
+   isotropic width" misses something at medium range that grows with
+   distance (preferred extra width 0.02 Å locally, 0.06 Å beyond 5 Å).
+4. **F(Q) is blind to ξ** (0.103–0.105).
+
+**Candidates for the medium-range broadening** (to test next, cheapest
+first):
+
+- **Instrument resolution.** Qdamp is fixed at RMC's 0.0389 Å⁻¹, and a
+  mis-set Qdamp mimics distance-growing broadening. Scan Qdamp.
+- **The MACE quantum widths.** Soft or low-energy modes may be too stiff in
+  MACE, which would underestimate distant-pair widths.
+- **Strain or lattice-parameter spread.**
+- **Dynamic variant fluctuations** — the order–disorder hopping this
+  project wants to separate from static disorder, which pair statistics
+  alone cannot distinguish (S(Q,E) can).
+
+For the RMC control this means: judge the M3 w = 4 (~41 Å) windowed
+verdicts against the null and positive arms, not against this forward
+model, because the forward model cannot fix ξ beyond ~10 Å.
+
+**Consequences (scale scan).** The ×1 and ×2 positive arms bracket the local amplitude.
 They are long-range ordered, however, while the data are not beyond
 ~5 Å. The natural next forward models are (i) a correlation-length scan —
 the distortion coherent within domains of size ξ with random arm/phase
@@ -274,5 +342,7 @@ order the verdicts report is an RMC artifact at that scale.
       amplitudes; regenerate `verdicts.json` with the control
 - [x] scale scan against the measured F(Q): local ×1.5–1.75, no long-range
       coherence beyond ~5 Å
-- [ ] optional: W4-weighted arm; correlation-length (domain-size) scan;
-      per-irrep amplitude scan
+- [x] domain-size scan: coherence ≥ ~10 Å locally; beyond, G(r) is
+      insensitive to ξ and wants 0.06 Å of extra, non-pattern broadening
+- [ ] optional: Qdamp / width-source scan for the medium-range broadening;
+      W4-weighted arm; per-irrep amplitude scan

@@ -684,6 +684,37 @@ def slab_field_to_rmc_static(F104, setup):
     return static
 
 
+def variant_static_set(F104, setup):
+    """Every static displacement each site takes across the domain variants.
+
+    The variants of a slab field are its orbit under the cubic parent group
+    plus the slab phase (`make_variants`): doubling-axis arm × orientation ×
+    translation phase — the domain states a distorted crystal can choose.
+    For each variant and each cell parity along its doubling axis, the
+    displacement of every site, mapped to the RMC frame (d_rmc = Rᵀ d).
+    Returns (n_variants × 2, 52, 3), Å.
+    """
+    ops = cubic_symmetry_ops(setup["aligned"], setup["elem"])
+    variants = make_variants(field_to_compact(F104), setup["aligned"],
+                             setup["elem"], ops)
+    return np.array([G[:, p] @ setup["R"] for _, G in variants
+                     for p in (0, 1)])
+
+
+def incoherent_covariance(F104, setup):
+    """Per-site covariance of the static displacement over random variants.
+
+    What a site's static offset looks like to an atom in an unrelated
+    domain: zero mean (for a field with its k = 0 part removed) and this
+    (52, 3, 3) covariance, Å² — the `incoherent_cov` of
+    harmonic_pdf.harmonic_partials(domain_xi=...). Returns (cov, mean).
+    """
+    S = variant_static_set(F104, setup)
+    mean = S.mean(axis=0)
+    dev = S - mean
+    return np.einsum("vsi,vsj->sij", dev, dev) / len(S), mean
+
+
 def static_box(setup, static, a_cub):
     """An 8×8×8 RMC-frame box carrying `static` (from
     `slab_field_to_rmc_static`) on the ideal parent: (X cell units, sid, ijk).

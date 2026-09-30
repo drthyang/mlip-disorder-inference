@@ -159,6 +159,22 @@
   have a Ta–Ta spread of 0.225–0.229 Å, ours 0.115 (×1) / 0.185 (×1.6) /
   0.231 (×2). 3 new tests. Details and caveats:
   `docs/control-experiment-plan.md`.
+- **Domain-size scan** (`rmc_control.py scan --xi ... --workers N`):
+  `harmonic_pdf.harmonic_partials(domain_xi=, incoherent_cov=)` —
+  same-domain pairs (probability exp(−d/ξ)) carry the coherent static
+  geometry, others independent random domain variants as a per-site
+  Gaussian covariance (`mode_project.variant_static_set` — 24 variants × 2
+  parities — and `incoherent_covariance`). `prepare_model` caches U and
+  every correlation row so scans rebuild nothing (thread-safe; 8 threads
+  ≈ 4× faster); `scan` gains `--xi`, `--workers`, a ξ-profile summary
+  (`domain_summary`) and plot. Tests: ξ = ∞ equals long-range order, ξ → 0
+  equals an extra width, a finite ξ is the P-weighted mixture and keeps
+  coordination (Cu); the GTS variant set has 48 zero-mean states containing
+  the coherent field. The Gaussian treatment moves GTS closure Rw by ≤ 0.006
+  vs the exact state mixture. GTS (605 points, 24 min): coherence ≳ 10 Å is
+  required locally; 5–41 Å is flat in ξ and wants 0.06 Å extra isotropic
+  width that no scrambled published pattern supplies; joint best ξ ≈ 10 Å
+  (Rw(r) 0.194 vs 0.203 long-range order) fits neither window's optimum.
 
 ### Found
 - **`verdicts.json` v0.1 is not reproducible from committed code.** The

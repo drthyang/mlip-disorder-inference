@@ -208,8 +208,14 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
           single-crystal amplitude, robust to the width; beyond 5 Å an
           undistorted average + 0.06 Å width beats any long-range-ordered
           distortion — short-range order. The paper's PDFgui local fits
-          carry the same ~×2 (Ta–Ta spread 0.23 vs 0.115 Å at ×1). Next:
-          correlation-length and per-irrep scans
+          carry the same ~×2 (Ta–Ta spread 0.23 vs 0.115 Å at ×1)
+    - [x] **domain-size scan** (`scan --xi`): distortion coherent within
+          domains of correlation length ξ, random variants between.
+          Locally ξ ≳ 10 Å is required (Rw 0.239 at 2.5 Å → 0.200 at
+          ≥ 15 Å); the 5–41 Å window is flat in ξ and wants 0.06 Å of
+          extra isotropic broadening that no scrambled published pattern
+          supplies; the joint best ξ ≈ 10 Å (0.194 vs 0.203 LRO) meets
+          neither window's optimum. Next: Qdamp / width-source scan
   - [ ] regenerate `verdicts.json` through the committed driver with the
         control-calibrated per-mode noise
 

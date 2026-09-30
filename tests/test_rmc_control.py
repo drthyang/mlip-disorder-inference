@@ -304,3 +304,19 @@ def test_scan_summary_profiles_over_the_nuisance():
     assert out["per_u_extra"]["0.04"]["scale"] == pytest.approx(1.5)
     assert out["grid_best"] == {"scale": 1.5, "u_extra_A": 0.04, "Rw": 0.1}
     assert out["profiled"]["scale"] == pytest.approx(1.5, abs=0.05)
+
+
+def test_domain_summary_profiles_over_xi():
+    xis = np.array([5.0, 10.0, 20.0, np.inf])
+    scales = np.array([1.0, 1.5, 2.0])
+    u = np.array([0.0, 0.04])
+    G = np.full((4, 2, 3), 0.3)
+    G[1, 1, 1] = 0.12            # best: ξ 10, u 0.04, ×1.5
+    G[3, 0, 2] = 0.20            # long-range order best: u 0, ×2
+    out = rc.domain_summary(xis, scales, u, {k: G for k in rc.SCAN_METRICS})
+    d = out["Rw_r"]
+    assert d["best"] == {"xi_A": "10", "Rw": 0.12, "scale": 1.5,
+                         "u_extra_A": 0.04}
+    assert d["long_range_order"]["scale"] == 2.0
+    assert d["gain_over_lro"] == pytest.approx(0.08)
+    assert [p["xi_A"] for p in d["profile"]] == ["5", "10", "20", "inf"]

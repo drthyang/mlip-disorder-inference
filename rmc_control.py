@@ -559,15 +559,51 @@ def scan_summary(scales, u_extra, grids):
     return out
 
 
-def cmd_scan(args):
-    """Forward closure of the published distortion's amplitude.
+def xi_label(xi):
+    """'inf' or the value in Å, for keys and JSON (which has no infinity)."""
+    return "inf" if not np.isfinite(xi) else f"{xi:g}"
 
-    For every (scale s, extra width u) the analytic g(r) of the null model
-    with s × (published field, k = 0 removed) as static offsets and u² extra
-    uncorrelated variance, X-ray F(Q), and its distance from the measured
-    F(Q) as RMC sees it (`closure_metrics`). The MLIP model is built once.
+
+def domain_summary(xis, scales, u_extra, grids):
+    """Correlation-length profile of a 3-D scan (ξ × u_extra × scale).
+
+    Per metric: the best point overall, and for every ξ the best (scale,
+    u_extra) — the profile over the other two parameters — plus the
+    long-range-order (ξ = ∞) value when it was scanned. JSON-ready.
     """
+    out = {}
+    for k in SCAN_METRICS:
+        G = np.asarray(grids[k])
+        prof = []
+        for ix, xi in enumerate(xis):
+            iu, js = np.unravel_index(np.argmin(G[ix]), G[ix].shape)
+            prof.append({"xi_A": xi_label(xi), "Rw": float(G[ix, iu, js]),
+                         "scale": float(scales[js]),
+                         "u_extra_A": float(u_extra[iu])})
+        best = min(prof, key=lambda d: d["Rw"])
+        lro = next((d for d in prof if d["xi_A"] == "inf"), None)
+        out[k] = {"best": best, "profile": prof, "long_range_order": lro,
+                  "gain_over_lro": (None if lro is None
+                                    else round(lro["Rw"] - best["Rw"], 5))}
+    return out
+
+
+def cmd_scan(args):
+    """Forward closure of the published distortion's amplitude (and its
+    correlation length).
+
+    For every (ξ, extra width u, scale s): the analytic g(r) of the null
+    model with s × (published field, k = 0 removed) as static offsets —
+    coherent within domains of correlation length ξ, independent random
+    domain variants beyond (ξ = ∞: long-range order) — plus u² extra
+    uncorrelated variance; its X-ray F(Q); and its distance from the
+    measured F(Q) as RMC sees it (`closure_metrics`). The MLIP model and its
+    correlations are built once; points run on a thread pool.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     import harmonic_pdf as hp
+    import mode_project as mp
 
     out = args.outdir
     out.mkdir(parents=True, exist_ok=True)
@@ -575,68 +611,136 @@ def cmd_scan(args):
     mdl = build_model(args, out)
     static1, inj = injection_static("published", 1.0, args.keep_gamma,
                                     args.cif, mdl["atoms0"])
+    setup = mp.projection_setup(args.cif)
+    F1 = mp.published_field(setup)
+    if not args.keep_gamma:
+        F1 = mp.remove_uniform_part(F1, setup)
+    cov1, _ = mp.incoherent_covariance(F1, setup)
+    model = hp.prepare_model(mdl["ph_mean"], args.temperature, M=args.grid)
     scales = np.array([float(x) for x in args.scales.split(",")])
     u_extra = np.array([float(x) for x in args.u_extra.split(",")])
+    xis = np.array([float(x) for x in args.xi.split(",")])
     Q, F_meas = md_run.parse_fq(args.data)
-    symbols = list(mdl["ph_mean"].unitcell.symbols)
-    print(f"[3/5] scan: {len(scales)} scales × {len(u_extra)} extra widths "
-          f"(grid {args.grid}³, r ≤ {args.rmax} Å)")
-    grids = {k: np.zeros((len(u_extra), len(scales)))
-             for k in SCAN_METRICS + ("scale",)}
-    F_all = np.zeros((len(u_extra), len(scales), len(Q)))
-    for iu, u in enumerate(u_extra):
-        for js, s in enumerate(scales):
-            t1 = time.time()
-            r, g, _ = hp.harmonic_partials(
-                mdl["ph_mean"], args.temperature, M=args.grid,
-                r_max=args.rmax, dr=args.dr,
-                static=None if s == 0 else s * static1, extra_u2=u * u,
-                log=None)
-            F = md_run.xray_fq(r, g, symbols, Q, mdl["rho0"], mdl["qdamp"])
-            cm = closure_metrics(Q, F_meas, F, mdl["box_len"], mdl["rho0"],
-                                 args.dr)
+    symbols = model["symbols"]
+    shape = (len(xis), len(u_extra), len(scales))
+    print(f"[3/5] scan: {len(xis)} correlation lengths × {len(u_extra)} "
+          f"extra widths × {len(scales)} scales = {int(np.prod(shape))} "
+          f"points (grid {args.grid}³, r ≤ {args.rmax} Å, "
+          f"{args.workers} workers)")
+    grids = {k: np.zeros(shape) for k in SCAN_METRICS + ("scale",)}
+    F_all = np.zeros(shape + (len(Q),))
+
+    def point(idx):
+        ix, iu, js = idx
+        s, u, xi = scales[js], u_extra[iu], xis[ix]
+        r, g, _ = hp.harmonic_partials(
+            None, args.temperature, model=model, r_max=args.rmax, dr=args.dr,
+            static=None if s == 0 else s * static1, extra_u2=u * u,
+            domain_xi=None if s == 0 else xi, incoherent_cov=s * s * cov1,
+            log=None)
+        F = md_run.xray_fq(r, g, symbols, Q, mdl["rho0"], mdl["qdamp"])
+        return idx, F, closure_metrics(Q, F_meas, F, mdl["box_len"],
+                                       mdl["rho0"], args.dr)
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+        for (ix, iu, js), F, cm in ex.map(point, np.ndindex(*shape)):
             for k in grids:
-                grids[k][iu, js] = cm[k]
-            F_all[iu, js] = F
-            print(f"  u_extra {u:.3f} Å  ×{s:<4g}  Rw(Q) {cm['Rw_Q']:.4f}  "
-                  f"Rw(r) {cm['Rw_r']:.4f} [<5 Å {cm['Rw_r_local']:.4f}, "
-                  f">5 Å {cm['Rw_r_mid']:.4f}]  ({time.time() - t1:.0f} s)")
+                grids[k][ix, iu, js] = cm[k]
+            F_all[ix, iu, js] = F
+            done += 1
+            print(f"  ξ {xi_label(xis[ix]):>4s} Å  u_extra {u_extra[iu]:.3f} Å"
+                  f"  ×{scales[js]:<4g}  Rw(Q) {cm['Rw_Q']:.4f}  Rw(r) "
+                  f"{cm['Rw_r']:.4f} [<5 Å {cm['Rw_r_local']:.4f}, >5 Å "
+                  f"{cm['Rw_r_mid']:.4f}]  ({done}/{int(np.prod(shape))})",
+                  flush=True)
 
     print("[4/5] summary")
-    summary = scan_summary(scales, u_extra, grids)
+    by_xi = {xi_label(xi): scan_summary(scales, u_extra,
+                                        {k: grids[k][ix] for k in grids})
+             for ix, xi in enumerate(xis)}
+    dom = domain_summary(xis, scales, u_extra, grids)
     for k in SCAN_METRICS:
-        s0, pr, gb = (summary[k]["no_extra_width"], summary[k]["profiled"],
-                      summary[k]["grid_best"])
-        print(f"  {k:10s} best scale: {s0['scale']:.2f} at u_extra = 0 "
-              f"(Rw {s0['Rw']:.4f}{', edge' if s0['on_edge'] else ''}); "
-              f"{pr['scale']:.2f} with the width free (Rw {pr['Rw']:.4f}; "
-              f"grid best ×{gb['scale']:g}, u_extra {gb['u_extra_A']:g} Å)")
+        b = dom[k]["best"]
+        line = (f"  {k:10s} best: ξ {b['xi_A']} Å, ×{b['scale']:g}, u_extra "
+                f"{b['u_extra_A']:g} Å (Rw {b['Rw']:.4f})")
+        if dom[k]["long_range_order"] is not None and len(xis) > 1:
+            line += f"; long-range order {dom[k]['long_range_order']['Rw']:.4f}"
+        print(line)
     result = {
         "purpose": "forward closure of the published P-4̄2₁m distortion's "
-                   "amplitude against the measured F(Q), with an extra "
-                   "uncorrelated width as nuisance",
+                   "amplitude and correlation length against the measured "
+                   "F(Q), with an extra uncorrelated width as nuisance",
         "generated": time.strftime("%Y-%m-%d %H:%M"),
         "settings": {"grid": args.grid, "r_max_A": args.rmax,
                      "temperature_K": args.temperature,
                      "calculator": f"{args.calc}-{args.model}",
                      "mean_positions": args.mean,
                      "injected_field": inj["mode"],
-                     "gamma_part": inj["gamma_part"]},
+                     "gamma_part": inj["gamma_part"],
+                     "domain_model": "P(same domain | d) = exp(-d/xi), "
+                     "independent uniform variants between domains "
+                     "(Gaussian variant covariance)"},
         "injected_amplitudes_at_scale_1_A": inj["injected_amplitudes_A"]["w8"],
+        "xi_A": [xi_label(x) for x in xis],
         "scales": scales.tolist(), "u_extra_A": u_extra.tolist(),
+        "grids_axes": ["xi", "u_extra", "scale"],
         "grids": {k: np.round(v, 5).tolist() for k, v in grids.items()},
-        "summary": summary,
+        "summary": {"by_xi": by_xi, "domains": dom},
         "runtime_s": round(time.time() - t0, 1),
     }
     print("[5/5] outputs")
     (out / "scan.json").write_text(json.dumps(result, indent=2))
-    np.savez(out / "scan.npz", scales=scales, u_extra=u_extra, Q=Q,
+    np.savez(out / "scan.npz", xi=xis, scales=scales, u_extra=u_extra, Q=Q,
              F_measured=F_meas, F=F_all,
              **{k: v for k, v in grids.items()})
-    _plot_scan(out, scales, u_extra, grids, summary)
+    if len(xis) == 1:
+        _plot_scan(out, scales, u_extra, {k: grids[k][0] for k in grids},
+                   by_xi[xi_label(xis[0])])
+    else:
+        _plot_domain_scan(out, xis, dom)
     print(f"  wrote {out}/scan.json, scan.npz, scan.png in "
           f"{time.time() - t0:.0f} s")
     return 0
+
+
+def _plot_domain_scan(out, xis, dom):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    titles = {"Rw_Q": "Rw(Q), box-convolved F(Q)",
+              "Rw_r": "Rw(r), 1.5 Å – L/2",
+              "Rw_r_local": "Rw(r), 1.5–5 Å", "Rw_r_mid": "Rw(r), 5 Å – L/2"}
+    fin = np.isfinite(xis)
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    for ax, k in zip(axes.ravel(), SCAN_METRICS):
+        prof = dom[k]["profile"]
+        x = xis[fin]
+        y = [d["Rw"] for d, f in zip(prof, fin) if f]
+        ax.semilogx(x, y, "o-", ms=4)
+        for xx, d in zip(x, [d for d, f in zip(prof, fin) if f]):
+            ax.annotate(f"×{d['scale']:g}\n{d['u_extra_A']:g}", (xx, d["Rw"]),
+                        fontsize=6, textcoords="offset points",
+                        xytext=(0, 6), ha="center")
+        lro = dom[k]["long_range_order"]
+        if lro is not None:
+            ax.axhline(lro["Rw"], color="k", ls="--", lw=0.8,
+                       label=f"long-range order (×{lro['scale']:g}, "
+                       f"u {lro['u_extra_A']:g} Å)")
+            ax.legend(fontsize=7)
+        ax.set(title=titles[k], xlabel="domain correlation length ξ (Å)",
+               ylabel="best Rw over scale, u_extra")
+        # a common minimum span, so a flat profile LOOKS flat
+        vals = [d["Rw"] for d in prof]
+        lo, hi = min(vals), max(vals)
+        pad = max(0.0, 0.04 - (hi - lo)) / 2
+        ax.set_ylim(lo - pad - 0.003, hi + pad + 0.003)
+    fig.suptitle("domain scan — labels: best scale / extra width (Å) at each "
+                 "ξ; y spans ≥ 0.04 in Rw", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out / "scan.png", dpi=130)
+    plt.close(fig)
 
 
 def _plot_scan(out, scales, u_extra, grids, summary):
@@ -904,6 +1008,11 @@ def main(argv=None):
     s.add_argument("--u-extra", default="0,0.02,0.04,0.06,0.08",
                    help="comma-separated extra isotropic uncorrelated "
                    "displacement, Å rms per component (nuisance width)")
+    s.add_argument("--xi", default="inf",
+                   help="comma-separated domain correlation lengths, Å "
+                   "('inf' = long-range order)")
+    s.add_argument("--workers", type=int, default=8,
+                   help="threads evaluating grid points")
     s.add_argument("-o", "--outdir", type=Path,
                    default=Path("results/rmc_control/scale_scan"))
     s.set_defaults(func=cmd_scan)

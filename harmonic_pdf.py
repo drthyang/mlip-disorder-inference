@@ -131,8 +131,31 @@ def _cells_within(lattice, r_max):
     return np.stack(np.meshgrid(i, i, i, indexing="ij"), -1).reshape(-1, 3)
 
 
+def prepare_model(phonon, temperature, M=16, cutoff=0.01):
+    """Everything `harmonic_partials` needs from the phonon model, once.
+
+    Mean cell, quantum site covariances U (Å²) and every correlation row
+    Σ_j(R) on the M-grid. Independent of static fields, extra widths and
+    domain sizes, so a scan builds it once and reuses it (read-only, safe to
+    share between threads). Memory ≈ n²·M³·72 B (0.1 GB for n = 52, M = 8;
+    0.8 GB for M = 16).
+    """
+    cell = phonon.unitcell
+    frac = np.asarray(cell.scaled_positions, dtype=float)
+    masses = np.asarray(cell.masses, dtype=float)
+    q, V, _ = scaled_modes(phonon, M, temperature, cutoff)
+    model = {"lattice": np.asarray(cell.cell, dtype=float), "frac": frac,
+             "symbols": list(cell.symbols), "masses": masses, "M": M,
+             "temperature": temperature, "U": site_covariances(V, masses),
+             "rows": [row_correlations(q, V, frac, masses, j, M)
+                      for j in range(len(frac))]}
+    del V
+    return model
+
+
 def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
                       n_sigma=5.0, cutoff=0.01, static=None, extra_u2=0.0,
+                      domain_xi=None, incoherent_cov=None, model=None,
                       log=print):
     """Partial g_ab(r) of the infinite quantum-harmonic crystal.
 
@@ -141,6 +164,7 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
     phonon : Phonopy with force constants and primitive == unit cell. The
         mean structure is phonopy's unit cell (positions and lattice as
         given — pass the cell whose mean positions the data should carry).
+        May be None when `model` is given.
     temperature : K.
     M : q-grid (and correlation box) size in unit cells; displacement
         correlations are kept for pairs inside the minimum-image cube of the
@@ -156,32 +180,43 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
         per component added to every site's U (a nuisance width: random
         static disorder, anharmonic or model-stiffness broadening). Adds
         2·extra_u2 to every pair variance.
+    domain_xi : Å, optional — the static distortion is coherent only within
+        domains: a pair at ideal separation d lies in one domain with
+        probability P = exp(−d/ξ) (isotropic Poisson domain walls, ξ the
+        correlation length) and then carries the `static` offsets exactly;
+        otherwise its atoms belong to independent random domain variants,
+        which enter as the extra covariance `incoherent_cov` (n, 3, 3)
+        (mode_project.incoherent_covariance) on the ideal separation. Exact
+        for the pair statistics apart from that Gaussian treatment of the
+        variant mixture. None / inf = long-range order.
+    model : `prepare_model(phonon, temperature, M, cutoff)` to reuse.
 
     Returns
     -------
     r : (nbins,) Å;  g : dict[(a, b)] -> (nbins,), a <= b alphabetically;
     info : dict with U (n,3,3) Å², u_rms per site, and pair counts.
     """
-    cell = phonon.unitcell
-    lattice = np.asarray(cell.cell, dtype=float)
-    frac = np.asarray(cell.scaled_positions, dtype=float)
-    symbols = list(cell.symbols)
-    masses = np.asarray(cell.masses, dtype=float)
+    if model is None:
+        model = prepare_model(phonon, temperature, M, cutoff)
+    lattice, frac, symbols = model["lattice"], model["frac"], model["symbols"]
+    M = model["M"]
     n = len(frac)
     species = sorted(set(symbols))
     pair_keys = [(a, b) for i, a in enumerate(species) for b in species[i:]]
     key_index = {}
     for k, (a, b) in enumerate(pair_keys):
         key_index[(a, b)] = key_index[(b, a)] = k
-
-    q, V, _ = scaled_modes(phonon, M, temperature, cutoff)
-    U = site_covariances(V, masses) + extra_u2 * np.eye(3)[None]
+    U = model["U"] + extra_u2 * np.eye(3)[None]
 
     nbins = int(round(r_max / dr))
     r = dr * np.arange(1, nbins + 1)
     counts = np.zeros((len(pair_keys), nbins))
     cells = _cells_within(lattice, r_max)
     half = M // 2
+    domains = (static is not None and domain_xi is not None
+               and np.isfinite(domain_xi))
+    if domains and incoherent_cov is None:
+        raise ValueError("domain_xi needs incoherent_cov (n, 3, 3)")
     if static is None:
         static = np.zeros((1, 1, 1, n, 3))
     static = np.asarray(static, dtype=float)
@@ -193,8 +228,9 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
                                     indexing="ij"), -1).reshape(-1, 3)
     n_pairs = 0
     for j in range(n):
-        row = row_correlations(q, V, frac, masses, j, M)
+        row = model["rows"][j]
         dcart0 = (cells[:, None, :] + frac[None, :, :] - frac[j]) @ lattice
+        dist0 = np.linalg.norm(dcart0, axis=-1)
         site_key = np.array([key_index[(symbols[j], b)] for b in symbols])
         for c in subcells:                       # atom j sits in sub-cell c
             tgt = np.mod(c + cells, period)                        # (C, 3)
@@ -212,9 +248,29 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
             Sg = row[idx[:, 0], idx[:, 1], idx[:, 2], jp[corr]]
             C[corr] -= Sg + np.transpose(Sg, (0, 2, 1))
             sig = np.sqrt(np.einsum("pi,pij,pj->p", dhat, C, dhat))
-            _accumulate(counts, r, dr, d, sig, site_key[jp], n_sigma)
+            if not domains:
+                _accumulate(counts, r, dr, d, sig, site_key[jp], n_sigma)
+            else:
+                # same-domain pairs: the static geometry, weight P(d0)
+                _accumulate(counts, r, dr, d, sig, site_key[jp], n_sigma,
+                            weight=np.exp(-dist0[ci, jp] / domain_xi))
+                # different domains: ideal geometry + variant covariance,
+                # pairs selected by their own (ideal) distance
+                k0 = (dist0 > 1e-6) & (dist0 <= r_max)
+                ci0, jp0 = np.nonzero(k0)
+                d0 = dist0[ci0, jp0]
+                dhat0 = dcart0[ci0, jp0] / d0[:, None]
+                Ci = U[j][None] + U[jp0] + incoherent_cov[j][None] \
+                    + incoherent_cov[jp0]
+                nc0 = cells[ci0]
+                corr0 = np.all(np.abs(nc0) < half, axis=1)
+                idx0 = np.mod(nc0[corr0], M)
+                S0 = row[idx0[:, 0], idx0[:, 1], idx0[:, 2], jp0[corr0]]
+                Ci[corr0] -= S0 + np.transpose(S0, (0, 2, 1))
+                sig0 = np.sqrt(np.einsum("pi,pij,pj->p", dhat0, Ci, dhat0))
+                _accumulate(counts, r, dr, d0, sig0, site_key[jp0], n_sigma,
+                            weight=1.0 - np.exp(-d0 / domain_xi))
             n_pairs += len(d)
-    del V
     counts /= len(subcells)                      # per parent unit cell
 
     vol = abs(np.linalg.det(lattice))
@@ -227,19 +283,22 @@ def harmonic_partials(phonon, temperature, M=16, r_max=120.0, dr=0.01,
     u_rms = np.sqrt(np.trace(U, axis1=1, axis2=2) / 3.0)
     if log:
         log(f"  harmonic g(r): {n} sites × {len(subcells)} static "
-            f"sub-cells, M = {M}, T = {temperature} K, "
-            f"{n_pairs} pairs to {r_max} Å; u_rms per component "
-            f"{u_rms.min():.4f}–{u_rms.max():.4f} Å")
+            f"sub-cells, M = {M}, T = {model['temperature']} K, "
+            f"{n_pairs} pairs to {r_max} Å"
+            + (f", domains ξ = {domain_xi} Å" if domains else "")
+            + f"; u_rms per component {u_rms.min():.4f}–{u_rms.max():.4f} Å")
     return r, g, {"U": U, "u_rms": u_rms, "n_pairs": n_pairs,
                   "pair_keys": pair_keys, "static_period": period.tolist()}
 
 
-def _accumulate(counts, r, dr, d, sig, kidx, n_sigma, chunk=200_000):
+def _accumulate(counts, r, dr, d, sig, kidx, n_sigma, chunk=200_000,
+                weight=None):
     """Add each pair's radial profile, integrated per bin, into counts.
 
     Profile: (r/d)·N(r; d, σ) — the exact shell distribution of an isotropic
     3D Gaussian displacement for d ≫ σ (the (r+d) image term is dropped),
     evaluated at bin centres × dr. Pairs with σ below dr/2 are binned whole.
+    `weight` (per pair, default 1) scales each profile.
     """
     nbins = len(r)
     for s in range(0, len(d), chunk):
@@ -254,6 +313,8 @@ def _accumulate(counts, r, dr, d, sig, kidx, n_sigma, chunk=200_000):
         w = (rb / dd[:, None]) * np.exp(-0.5 * z * z) / (
             np.sqrt(2 * np.pi) * ss[:, None]) * dr
         w[np.abs(z) > n_sigma] = 0.0
+        if weight is not None:
+            w *= weight[s:s + chunk, None]
         ok = (b >= 0) & (b < nbins)
         flat = (kk[:, None] * nbins + b)[ok]
         counts += np.bincount(flat, weights=w[ok],

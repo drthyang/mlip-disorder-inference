@@ -176,3 +176,23 @@ def test_remove_uniform_part(setup):
         j = keys.index(key)
         assert amp["sb"][j] == pytest.approx(amp["full"][j], abs=1e-3)
     assert amp["sb"][keys.index("G1")] < amp["full"][keys.index("G1")]
+
+
+def test_variant_set_and_incoherent_covariance(setup):
+    """The domain states of the published distortion: 24 variants × 2 cell
+    parities, zero mean once the k = 0 part is removed, the coherent
+    RMC-frame static field among them, and a covariance whose trace is the
+    mean squared static displacement."""
+    F = mp.remove_uniform_part(mp.published_field(setup), setup)
+    S = mp.variant_static_set(F, setup)
+    assert S.shape == (48, 52, 3)
+    cov, mean = mp.incoherent_covariance(F, setup)
+    assert np.abs(mean).max() < 1e-12
+    assert np.allclose(np.trace(cov, axis1=1, axis2=2),
+                       (S**2).sum(-1).mean(0), atol=1e-12)
+    static = mp.slab_field_to_rmc_static(F, setup)
+    ax = int(np.argmax(static.shape[:3]))
+    for cz in (0, 1):
+        idx = [0, 0, 0]
+        idx[ax] = cz
+        assert any(np.allclose(static[tuple(idx)], V, atol=1e-9) for V in S)

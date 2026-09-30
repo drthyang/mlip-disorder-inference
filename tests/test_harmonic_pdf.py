@@ -194,3 +194,41 @@ def test_extra_u2_adds_uncorrelated_pair_variance(cu_phonon):
         mu = (w * r[m]).sum() / w.sum()
         var.append((w * (r[m] - mu)**2).sum() / w.sum())
     assert var[1] - var[0] == pytest.approx(2 * u2, rel=0.03)
+
+
+# ------------------------------------------------------------- domains
+
+def test_domain_limits(cu_phonon):
+    """ξ = ∞ is long-range order; ξ → 0 with an isotropic variant
+    covariance s²·I is the incoherent limit, identical to adding s² of
+    uncorrelated width; a finite ξ lies between and conserves counts."""
+    model = hp.prepare_model(cu_phonon, 300.0, M=4)
+    static, s2 = _cu_static(0.05), 0.04**2
+    cov = np.broadcast_to(s2 * np.eye(3), (4, 3, 3))
+    kw = dict(r_max=8.0, dr=0.005, model=model, log=None)
+    r, g_lro, _ = hp.harmonic_partials(None, 300.0, static=static, **kw)
+    _, g_inf, _ = hp.harmonic_partials(None, 300.0, static=static,
+                                       domain_xi=np.inf, incoherent_cov=cov,
+                                       **kw)
+    assert np.array_equal(g_inf[("Cu", "Cu")], g_lro[("Cu", "Cu")])
+    _, g_0, _ = hp.harmonic_partials(None, 300.0, static=static,
+                                     domain_xi=1e-9, incoherent_cov=cov, **kw)
+    _, g_w, _ = hp.harmonic_partials(None, 300.0, extra_u2=s2, **kw)
+    assert np.abs(g_0[("Cu", "Cu")] - g_w[("Cu", "Cu")]).max() < 1e-9
+    _, g_x, _ = hp.harmonic_partials(None, 300.0, static=static,
+                                     domain_xi=5.0, incoherent_cov=cov, **kw)
+    m = (r > 2.0) & (r < 2.95)                       # first shell
+    rho = 4 / A_CU**3
+    for g in (g_lro, g_0, g_x):
+        n1 = (4 * np.pi * rho * r[m]**2 * g[("Cu", "Cu")][m] * 0.005).sum()
+        assert n1 == pytest.approx(12.0, rel=5e-3)
+    # the mixture weight at the first shell is exp(-2.55/5) = 0.60
+    P = np.exp(-2.553 / 5.0)
+    mix = P * g_lro[("Cu", "Cu")][m] + (1 - P) * g_0[("Cu", "Cu")][m]
+    assert np.abs(g_x[("Cu", "Cu")][m] - mix).max() < 0.02 * mix.max()
+
+
+def test_domains_need_incoherent_cov(cu_phonon):
+    with pytest.raises(ValueError, match="incoherent_cov"):
+        hp.harmonic_partials(cu_phonon, 5.0, M=4, r_max=5.0,
+                             static=_cu_static(), domain_xi=10.0, log=None)
