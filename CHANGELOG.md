@@ -1,6 +1,29 @@
 # Changelog
 
 ## [Unreleased]
+### Added — RMC control experiment (started 2026-09-29)
+- **RMCProfile's X-ray forward model, pinned exactly** (`md_run.py`:
+  `XRAY_WK`, `xray_f0`, `xray_weights`, `partial_fq`, `xray_fq`,
+  `rmc_box_convolve`). Every convention was fixed by reproducing
+  RMCProfile's own output files for GTS config 1, not taken from the manual:
+  Waasmaier–Kirfel f0 with ⟨f⟩² Faber–Ziman normalization (total F(Q) from
+  its partials to 4e-8); partials as a rectangle-rule sine transform of
+  g_ab(r) on r_k = k·dr at the box density with `RESOLUTION_CORRECTION`
+  applied as a **Gaussian** envelope exp(−(q·r)²/2) (to 5e-8 — the manual's
+  exp(−r·q) is not what the binary does); and `CONVOLVE ::` acting on the
+  *data* as a G(r) truncation at half the box edge (its "F(Q)_Expt" column
+  to Rw 0.001). Consequence for the control experiment: synthetic data must
+  be the infinite-crystal F(Q), written unconvolved.
+  `tests/test_xray_forward.py` (13 tests; 3 need the private data).
+
+### Found
+- **The GTS total-scattering data are X-ray, but the M2 closure is
+  neutron-weighted.** The RMC `.dat` fits `XRAY_RECIPROCAL_SPACE_DATA`;
+  `md_run.py` weights its simulated G(r)/F(Q) with neutron b_coh, under
+  which Ta has ~6× less relative contrast. The recorded M2 closure
+  (Rw(Q) = 0.74, scale 0.63) is therefore partly a weighting mismatch.
+  Not yet rerun — see ROADMAP.
+
 ### Changed
 - **Renamed `rmc-mlip-phonons` → `mlip-quantum-thermal` (2026-07-26).** The
   name describes the physics the repo generates — an MLIP quantum-thermal

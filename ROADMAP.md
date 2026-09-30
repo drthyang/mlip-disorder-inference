@@ -1,6 +1,6 @@
 # mlip-quantum-thermal — Development Roadmap
 
-*Last updated: 2026-07-26. Self-contained: the Python pipeline computes and
+*Last updated: 2026-09-29. Self-contained: the Python pipeline computes and
 `viewer/` displays. Detached from `rmc-phonon-dynamics` on 2026-07-23; see
 README "Scope pivot".*
 
@@ -61,7 +61,13 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
       anharmonic excess. band_T ≈ band (max |Δω| = 0.18 THz at 5 K) —
       machinery validated on the real system.
 - [ ] closure refinement: instrument-resolution / box-size-matched F(Q)
-      comparison so the null-model residual isolates the distortion
+      comparison so the null-model residual isolates the distortion.
+      **Found 2026-09-29: the GTS F(Q) is X-ray data** (the RMC `.dat` fits
+      `XRAY_RECIPROCAL_SPACE_DATA`), but `md_run.py`'s closure weights with
+      neutron b_coh — Ta carries ~6× more relative contrast in X-rays, so
+      the M2 acceptance Rw(Q) = 0.74 / scale 0.63 are partly a weighting
+      mismatch. The X-ray forward model now exists (`md_run.xray_fq`); the
+      closure CLI still needs a `--radiation` switch and a rerun.
 
 ## Milestone 3 — experiment-constrained FCs + verdicts
 
@@ -137,7 +143,17 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
       `random_signs`) take the configs as given and cannot test this;
       `f_noise` is currently one scalar applied flat across mode space.
       Until this runs, "X5 is static" is not separable from "X5 is where the
-      RMC move statistics pile up".
+      RMC move statistics pile up". Started 2026-09-29:
+  - [x] RMCProfile's forward model pinned exactly (`md_run.xray_*`): WK
+        X-ray form factors with ⟨f⟩² normalization, partials with a
+        **Gaussian** Qdamp envelope, and CONVOLVE = G(r) truncation of the
+        *data* at L/2 — each reproduced from RMCProfile's own output files
+        to ≤5e-8 (the data column to Rw 0.001).
+  - [ ] frame-correct ensemble projection driver in `mode_project.py`
+  - [ ] synthetic null F(Q): analytic quantum-harmonic G(r) of the
+        infinite crystal (correlated widths), X-ray weighted
+  - [ ] staged Perlmutter run directory (mirrors the original 500-chain run)
+  - [ ] RMCProfile runs (user, NERSC) → `rmc_control.py compare`
 
 ## Vision — model-space RMC / "dynamic EPSR" (concept, post-M3)
 

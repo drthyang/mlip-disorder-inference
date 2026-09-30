@@ -24,7 +24,12 @@ Pipeline:
       ->  closure.json + gr_sim.dat + sq_sim.dat (+ band_T.yaml via hiPhive)
 
 Units: Å, eV, THz throughout (phonopy defaults); neutron b_coh in fm
-(Sears 1992). All MLIP evaluations use default_dtype="float64".
+(Sears 1992); X-ray f0 in electrons (Waasmaier–Kirfel 1995, the table
+RMCProfile embeds). All MLIP evaluations use default_dtype="float64".
+
+The X-ray helpers (`xray_weights`, `partial_fq`, `xray_fq`,
+`rmc_box_convolve`) reproduce RMCProfile's own forward model exactly; the
+CLI closure below still uses neutron weights.
 
 Usage examples:
     python md_run.py sample run_dir/ --skip-nonconverged \\
@@ -53,6 +58,36 @@ BCOH_FM = {
     "Se": 7.970, "Nb": 7.054, "Mo": 6.715, "Ta": 6.91, "W": 4.86,
     "Pt": 9.60, "Au": 7.63, "Pb": 9.405, "V": -0.3824, "Ti": -3.438,
     "Ni": 10.3, "Fe": 9.45, "Zn": 5.680, "Zr": 7.16, "Ag": 5.922,
+}
+
+# Waasmaier–Kirfel 11-coefficient X-ray form factors of the neutral atoms,
+# f0(s) = Σ_i a_i exp(−b_i s²) + c with s = sin θ/λ = Q/4π (Å⁻¹);
+# D. Waasmaier & A. Kirfel, Acta Cryst. A51, 416 (1995), values as tabulated
+# by xraydb. This is the table RMCProfile embeds when no .xray file is given
+# (manual v6.7.9, release notes). Extend from `xraydb` as needed.
+XRAY_WK = {
+    "Al": ([4.730796, 2.313951, 1.54198, 1.117564, 3.154754],
+           [3.628931, 43.051167, 0.09596, 108.932388, 1.555918], 0.139509),
+    "Cu": ([14.014192, 4.784577, 5.056806, 1.457971, 6.932996],
+           [3.73828, 0.003744, 13.034982, 72.554794, 0.265666], -3.254477),
+    "Ga": ([15.758946, 6.841123, 4.121016, 2.714681, 2.395246],
+           [3.121754, 0.226057, 12.482196, 66.203621, 0.007238], -0.847395),
+    "Ge": ([16.540613, 1.5679, 3.727829, 3.345098, 6.785079],
+           [2.866618, 0.012198, 13.432163, 58.866047, 0.210974], 0.018726),
+    "Mo": ([6.236218, 17.987711, 12.973127, 3.451426, 0.210899],
+           [0.09078, 1.10831, 11.46872, 66.684151, 0.09078], 1.10877),
+    "Nb": ([17.958399, 12.063054, 5.007015, 3.287667, 1.531019],
+           [1.21159, 12.246687, 0.098615, 75.011948, 0.098615], 1.123452),
+    "Ni": ([13.521865, 6.947285, 3.866028, 2.1359, 4.284731],
+           [4.077277, 0.286763, 14.622634, 71.96608, 0.004437], -2.762697),
+    "S": ([6.372157, 5.154568, 1.473732, 1.635073, 1.209372],
+          [1.514347, 22.092527, 0.061373, 55.445175, 0.646925], 0.154722),
+    "Se": ([17.354071, 4.653248, 4.259489, 4.136455, 6.749163],
+           [2.349787, 0.00255, 15.57946, 45.181202, 0.177432], -3.160982),
+    "Ta": ([31.066359, 15.341823, 49.278297, 4.577665, 16.828321],
+           [1.708732, 9.618455, 0.00076, 66.346199, 0.168002], -44.119026),
+    "V": ([10.473575, 1.547881, 1.986381, 1.865616, 7.05625],
+          [7.08194, 0.02604, 31.909672, 108.022842, 0.474882], 0.067744),
 }
 
 
@@ -123,6 +158,104 @@ def neutron_weights(symbols):
             mult = 1.0 if a == bb else 2.0
             weights[(a, bb)] = mult * c[a] * c[bb] * b[a] * b[bb] / bbar**2
     return weights, species
+
+
+def xray_f0(element: str, Q: np.ndarray) -> np.ndarray:
+    """Waasmaier–Kirfel X-ray form factor f0(Q) of a neutral atom (electrons).
+
+    Q in Å⁻¹ (s = Q/4π). Raises SystemExit for elements missing from XRAY_WK.
+    """
+    if element not in XRAY_WK:
+        raise SystemExit(f"no X-ray form factor tabulated for {element}; "
+                         "extend XRAY_WK")
+    a, b, c = XRAY_WK[element]
+    s2 = (np.asarray(Q, dtype=float) / (4.0 * np.pi))**2
+    return sum(ai * np.exp(-bi * s2) for ai, bi in zip(a, b)) + c
+
+
+def xray_weights(symbols, Q):
+    """Q-dependent Faber–Ziman X-ray pair weights, RMCProfile convention.
+
+    w_ab(Q) = (2 − δ_ab) c_a c_b f_a(Q) f_b(Q) / (Σ_a c_a f_a(Q))², so that
+    F(Q) = Σ_{a≤b} w_ab(Q) F_ab(Q) and Σ w_ab = 1 at every Q. Verified to
+    4e-8 against RMCProfile's own X-ray F(Q) and partials for a GaTa4Se8
+    configuration (tests/test_xray_forward.py).
+
+    Parameters
+    ----------
+    symbols : list[str]
+        Per-atom element symbols of one configuration.
+    Q : (nQ,) array, Å⁻¹.
+
+    Returns
+    -------
+    weights : dict[(el_a, el_b)] -> (nQ,) array, a <= b.
+    species : sorted list of the distinct elements.
+    """
+    symbols = list(symbols)
+    species = sorted(set(symbols))
+    n = len(symbols)
+    c = {s: symbols.count(s) / n for s in species}
+    f = {s: xray_f0(s, Q) for s in species}
+    fbar = sum(c[s] * f[s] for s in species)
+    weights = {}
+    for i, a in enumerate(species):
+        for b in species[i:]:
+            mult = 1.0 if a == b else 2.0
+            weights[(a, b)] = mult * c[a] * c[b] * f[a] * f[b] / fbar**2
+    return weights, species
+
+
+def partial_fq(r, g_partials, Q, rho0, qdamp=0.0):
+    """Partial F_ab(Q) = 4πρ₀ Σ_r r² (g_ab(r) − 1) e^{−(qdamp·r)²/2} sinc(Qr) dr.
+
+    RMCProfile's transform, reproduced to 5e-8: rectangle rule on the given
+    r grid (RMCProfile: r_k = k·dr), total number density rho0 (Å⁻³), and its
+    RESOLUTION_CORRECTION applied as the GAUSSIAN envelope exp(−(qdamp·r)²/2)
+    (the PDFgui Qdamp form — the manual's exp(−r·qdamp) is not what the
+    binary does). qdamp in Å⁻¹; 0 disables it.
+
+    Returns dict[(a, b)] -> (nQ,) array, same keys as g_partials.
+    """
+    r = np.asarray(r, dtype=float)
+    dr = r[1] - r[0]
+    env = np.exp(-0.5 * (qdamp * r)**2)
+    Qr = np.outer(Q, r)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sinc = np.where(Qr > 1e-12, np.sin(Qr) / Qr, 1.0)
+    out = {}
+    for pair, g in g_partials.items():
+        out[pair] = 4.0 * np.pi * rho0 * (
+            sinc * (r**2 * (g - 1.0) * env)[None, :]).sum(axis=1) * dr
+    return out
+
+
+def xray_fq(r, g_partials, symbols, Q, rho0, qdamp=0.0):
+    """Total X-ray F(Q) = S(Q) − 1 from partial g_ab(r) (RMCProfile convention).
+
+    Composes `partial_fq` with the Q-dependent `xray_weights`. Units: r in Å,
+    Q in Å⁻¹, rho0 in Å⁻³; F dimensionless.
+    """
+    weights, _ = xray_weights(symbols, Q)
+    parts = partial_fq(r, g_partials, Q, rho0, qdamp)
+    return sum(w * parts[pair] for pair, w in weights.items())
+
+
+def rmc_box_convolve(Q, F, box_length, rho0, dr=0.01):
+    """Emulate RMCProfile's CONVOLVE on reciprocal-space DATA.
+
+    RMCProfile convolves the experimental F(Q) with the sinc of the finite
+    box, which on the measured Q window is equivalent to Fourier transforming
+    to G(r), truncating at half the box edge, and transforming back —
+    reproduces the "F(Q)_Expt" column RMCProfile writes to Rw = 0.001 for the
+    GaTa4Se8 run. Used only for diagnostics: synthetic data must be written
+    UNconvolved, because RMCProfile applies this itself.
+
+    Units: Q Å⁻¹, box_length Å, rho0 Å⁻³, dr Å.
+    """
+    r = np.arange(dr, box_length / 2.0 + 1e-9, dr)
+    G = fq_to_gr(Q, F, r, rho0)
+    return gr_to_fq(r, G, Q, rho0)
 
 
 def pair_histograms(frames, symbols, cell, r_max, dr):
