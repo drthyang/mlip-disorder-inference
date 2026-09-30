@@ -118,3 +118,61 @@ def test_file_driver_roundtrip(setup, tmp_path):
         assert out[f"amp_w{w}"].shape == (1, (8 // w)**3, len(setup["keys"]))
         assert out[f"rms_w{w}"][0, k] == pytest.approx(0.08, rel=0.05)
     assert out["moves"][0] == 777
+
+
+# ------------------------------------------- positive-control static field
+
+def test_published_field_in_rmc_frame_projects_to_published(setup):
+    """The paper's Table IV distortion, mapped to RMC-frame static offsets
+    and tiled into an 8x8x8 box, reads the published amplitudes through the
+    file-level driver at every window scale (long-range order)."""
+    F = mp.published_field(setup)
+    static = mp.slab_field_to_rmc_static(F, setup)
+    assert sorted(static.shape[:3]) == [1, 1, 2]
+    X, sid, ijk = mp.static_box(setup, static, A_CUB)
+    out = mp.config_amplitudes(X, sid, ijk, A_CUB, setup)
+    pub = setup["ref"]["published_amplitudes_A"]
+    keys = list(setup["keys"])
+    for key, tol in [("X5", 0.05), ("X3", 0.10), ("W4", 0.15), ("D", 0.10)]:
+        for w in (2, 4, 8):
+            got = out[f"w{w}"][:, keys.index(key)]
+            assert np.allclose(got, got[0], rtol=1e-6)          # every window
+            assert got[0] == pytest.approx(pub[key], rel=tol), (key, w)
+
+
+def test_rmc_static_route_equals_pattern_frame_route(setup):
+    F = mp.published_field(setup)
+    X, sid, ijk = mp.static_box(setup, mp.slab_field_to_rmc_static(F, setup),
+                                A_CUB)
+    via_rmc = mp.config_amplitudes(X, sid, ijk, A_CUB, setup, windows=(8,))
+    ax, G = mp.field_to_compact(F)
+    S = np.zeros((3, 2, 52, 3))
+    for px in range(2):
+        for py in range(2):
+            for pz in range(2):
+                par = (px, py, pz)
+                for a in range(3):
+                    S[a, par[a]] += 64.0 * G[:, par[ax]]
+    direct = mp.project_all(S, setup["projector"])
+    for j, k in enumerate(setup["keys"]):
+        assert via_rmc["w8"][0, j] == pytest.approx(direct[k], abs=1e-6)
+
+
+def test_remove_uniform_part(setup):
+    F = mp.published_field(setup)
+    Fs = mp.remove_uniform_part(F, setup)
+    assert np.allclose(mp.remove_uniform_part(Fs, setup), Fs, atol=1e-12)
+    # a pure k=0 field (the removed part) is annihilated
+    assert np.abs(mp.remove_uniform_part(F - Fs, setup)).max() < 1e-12
+    # the staggered channels are untouched
+    amp = {}
+    for tag, field in (("full", F), ("sb", Fs)):
+        X, sid, ijk = mp.static_box(
+            setup, mp.slab_field_to_rmc_static(field, setup), A_CUB)
+        amp[tag] = mp.config_amplitudes(X, sid, ijk, A_CUB, setup,
+                                        windows=(8,))["w8"][0]
+    keys = list(setup["keys"])
+    for key in ("X5", "X3", "W4", "D"):
+        j = keys.index(key)
+        assert amp["sb"][j] == pytest.approx(amp["full"][j], abs=1e-3)
+    assert amp["sb"][keys.index("G1")] < amp["full"][keys.index("G1")]

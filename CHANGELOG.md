@@ -68,6 +68,16 @@
   uniform offset changes nothing (1e-9); a 1×1×2 Cu pattern matches
   phonopy snapshots with the same offsets added (shell counts, positions,
   widths to 2 %).
+- **The published distortion as a static field** (`mode_project.py`:
+  `published_field` — SM Table IV expanded over the slab orbits;
+  `remove_uniform_part` — drops the k = 0 part, i.e. the Γ offset between
+  the paper's AMPLIMODES parent and ours; `slab_field_to_rmc_static` —
+  pattern frame → RMC-frame (p1, p2, p3, 52, 3) offsets for
+  `harmonic_pdf`; `static_box`). `projection_setup` now also returns the
+  reference, label mapping and orbits. Tiled into an RMC-frame 8³ box the
+  field reads X5 0.1183 / X3 0.0684 / W4 0.0278 / Δ 0.0205 Å (published
+  0.1196 / 0.0719 / 0.026 / 0.0212) at every window scale, identical to
+  the pattern-frame route. 3 new tests in `tests/test_projection_frame.py`.
 
 ### Found
 - **`verdicts.json` v0.1 is not reproducible from committed code.** The

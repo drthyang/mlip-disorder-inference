@@ -177,6 +177,10 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
     - [x] `harmonic_pdf.harmonic_partials(static=...)`: periodic static
           offsets on top of the parent's quantum widths/correlations;
           matches snapshots-plus-offsets (widths to 2 %)
+    - [x] the published distortion as RMC-frame static offsets
+          (`mode_project.published_field` → `remove_uniform_part` →
+          `slab_field_to_rmc_static`): an 8³ box of it reads X5 0.118 /
+          X3 0.068 / W4 0.028 / Δ 0.021 Å at every window scale
   - [ ] regenerate `verdicts.json` through the committed driver with the
         control-calibrated per-mode noise
 

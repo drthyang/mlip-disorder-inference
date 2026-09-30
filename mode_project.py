@@ -612,7 +612,91 @@ def projection_setup(cif: Path = DEFAULT_CIF, ref_path: Path = REF_JSON):
     proj = build_projector(fields, aligned, elem)
     return {"elem": elem, "ideal": ideal, "aligned": aligned, "R": R,
             "shift": shift, "n_site": n_site, "fields": fields,
-            "projector": proj, "keys": proj["keys"], "a_ref": a}
+            "projector": proj, "keys": proj["keys"], "a_ref": a, "c_ref": c,
+            "ref": ref, "mapping": mapping, "orbits": orbits}
+
+
+def published_field(setup):
+    """The paper's refined total distortion on the 104-atom slab, Å.
+
+    SM Table IV (the printed total displacement per AMPLIMODES label, the
+    object whose irrep decomposition is Table II), expanded over each
+    label's slab orbit in the pattern frame. Projects to the published
+    amplitudes (X5 0.12, X3 0.072, ... Å) — tests/test_mode_project.py.
+    """
+    ref, a, c = setup["ref"], setup["a_ref"], setup["c_ref"]
+    F = np.zeros((104, 3))
+    for lab, (oi, anchor) in setup["mapping"].items():
+        u = np.array(ref["table_IV_total"][lab]["u_frac"]) * np.array([a, a, c])
+        orb = setup["orbits"][oi]
+        F[orb["members"]] = expand_vec_over_orbit(orb, anchor, u)
+    return F
+
+
+def remove_uniform_part(F104, setup):
+    """Drop the k = 0 (lattice-periodic, Γ) component of a slab field.
+
+    The Γ part is the average over the 8 parent translations the slab
+    contains (4 F-centering vectors × 2 cubic cells along the doubling
+    axis); what remains carries only X, W and Δ content, whose average over
+    the parent translations vanishes — the F-4̄3m-symmetric part of the mean
+    structure stays on the parent. (A single-domain X-point field is still
+    constant across CONVENTIONAL cells, so per-site means of such a crystal
+    are P-4̄2₁m, not cubic.) Used for the positive control: the published
+    Table IV total also carries a Γ offset between the paper's AMPLIMODES
+    parent and ours (the "reference-dependent" Γ channels), which is not a
+    distortion to inject.
+    """
+    frac = setup["aligned"]
+    F = np.asarray(F104, dtype=float)
+    k0 = np.zeros((52, 3))
+    for t in ([0, 0, 0], [0, .5, .5], [.5, 0, .5], [.5, .5, 0]):
+        y = (frac + np.array(t)) % 1.0
+        d = (frac[None, :, :] - y[:, None, :] + 0.5) % 1.0 - 0.5
+        img = np.argmin((d * d).sum(-1), axis=1)     # site s -> image site
+        k0 += F[img] + F[img + 52]
+    k0 /= 8.0
+    return F - np.vstack([k0, k0])
+
+
+def slab_field_to_rmc_static(F104, setup):
+    """Pattern-frame slab field (104, 3) -> RMC-frame static offsets.
+
+    The pattern frame doubles along its z; in the RMC frame that is the axis
+    `ax` with |R[2, ax]| = 1, and an atom of site s in RMC cell ijk sits on
+    pattern-frame parity (ijk_ax + n_site[s, z]) mod 2 (see
+    `to_aligned_frame`). Vectors map back as d_rmc = Rᵀ d_pattern.
+
+    Returns an array (p1, p2, p3, 52, 3), Å, with p = 2 along `ax` and 1
+    elsewhere — the `static` argument of harmonic_pdf.harmonic_partials,
+    indexed [ijk mod p][site].
+    """
+    R, n_site = setup["R"], setup["n_site"]
+    ax = int(np.argmax(np.abs(R[2])))
+    period = [1, 1, 1]
+    period[ax] = 2
+    static = np.zeros(period + [52, 3])
+    for cz in (0, 1):
+        par = (cz + n_site[:, 2]) % 2
+        idx = [0, 0, 0]
+        idx[ax] = cz
+        static[tuple(idx)] = F104[np.arange(52) + 52 * par] @ R
+    return static
+
+
+def static_box(setup, static, a_cub):
+    """An 8×8×8 RMC-frame box carrying `static` (from
+    `slab_field_to_rmc_static`) on the ideal parent: (X cell units, sid, ijk).
+    """
+    period = np.array(static.shape[:3])
+    ijk = np.stack(np.meshgrid(*[np.arange(8)] * 3, indexing="ij"),
+                   -1).reshape(-1, 3)
+    ijk = np.repeat(ijk, 52, axis=0)
+    sid = np.tile(np.arange(1, 53), 512)
+    sub = ijk % period
+    X = (ijk + setup["ideal"][sid - 1]
+         + static[sub[:, 0], sub[:, 1], sub[:, 2], sid - 1] / a_cub)
+    return X % 8.0, sid, ijk
 
 
 def read_rmc6f_box(path: Path):
