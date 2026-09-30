@@ -164,9 +164,18 @@ converged configs (F-4̄3m, dynamically stable, 39 branches). `pytest -q` is
         on an M³ q-grid via FFT, no box, no sampling noise. Correlations
         equal phonopy's own supercell ⟨uuᵀ⟩ to 1e-18; shells match sampled
         quantum snapshots (coordination exact, widths to 0.2 %).
-  - [ ] synthetic null F(Q) for GTS (`rmc_control.py synth`)
-  - [ ] staged Perlmutter run directory (mirrors the original 500-chain run)
+  - [x] synthetic null F(Q) for GTS (`rmc_control.py synth`, 46 s):
+        MACE-MP-0 small at the experimental lattice, 5 K quantum, 16³
+        grid, r ≤ 120 Å, grid-scale noise from 6th differences. Against
+        the measured data (both box-convolved): Rw(Q) 0.248, Rw(r) 0.40.
+  - [x] staged 64-chain run (`results/rmc_control/null_run/`, `.dat` /
+        start box / `optimization.dat` byte-identical to the original;
+        64 chains → 5–6 % SE on the control ⟨A²⟩ at w = 4)
   - [ ] RMCProfile runs (user, NERSC) → `rmc_control.py compare`
+  - [ ] positive-control arm (published P-4̄2₁m distortion + quantum
+        motion: RMC's recovery of a known amplitude)
+  - [ ] regenerate `verdicts.json` through the committed driver with the
+        control-calibrated per-mode noise
 
 ## Vision — model-space RMC / "dynamic EPSR" (concept, post-M3)
 

@@ -58,7 +58,8 @@ Milestones 1–3 are implemented and have run end to end on the GTS 5 K data:
 | `milestone1_bands.py` | `band.yaml`, `relaxed.cif`, `summary.json` |
 | `md_run.py` | `closure.json`, `gr_sim.dat`, `sq_sim.dat`, `band_T.yaml` |
 | `hiphive_fit.py` | `band_rmc.yaml`, `fit_report.json` |
-| `mode_project.py` + `verdicts.py` | `verdicts.json` |
+| `mode_project.py` + `verdicts.py` | `verdicts.json`; `python mode_project.py <ens>` → projections npz |
+| `harmonic_pdf.py` + `rmc_control.py` | RMC control: synthetic null `scale_ft_rmc.fq`, staged NERSC run, `control_report.json` |
 | `export_modes.py` | `modes_irrep.yaml`, per-mode `.xyz` |
 | `viewer/` | browser front end for any of the band yamls |
 

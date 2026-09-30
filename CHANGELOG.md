@@ -41,6 +41,25 @@
   vs 0.106 Å uncorrelated). `md_run.harmonic_model` gains
   `primitive_matrix` / `compact_fc` (defaults unchanged); note that in
   phonopy ≥ 4 `primitive_matrix=None` means "auto" — the identity is `"P"`.
+- **`rmc_control.py`** — the control experiment's CLI. `synth`: MACE
+  quantum-harmonic null model → `harmonic_pdf` g(r) → X-ray F(Q) on the
+  measured grid in RMCProfile's convention, written unconvolved, plus
+  white noise at the measured grid-scale level (rolling MAD of 6th
+  differences — a 2nd difference reads resolution-limited Bragg curvature
+  as noise and overstated it ~50× at low Q), a manifest and a diagnostic
+  figure. `stage`: a NERSC run directory mirroring the original ensemble
+  run byte for byte except the data file (per-chain `submit_<i>.sh`
+  rendered from the original `submit.sh`, anchors checked). `compare`:
+  r_ctrl = ⟨A²⟩_meas/⟨A²⟩_ctrl per irrep and scale with bootstrap
+  intervals. `tests/test_rmc_control.py` (8 tests incl. an EMT-Cu
+  synth→stage run). Design and decision rule:
+  `docs/control-experiment-plan.md`.
+- **GTS control, ready to run.** Synthetic null data generated (46 s;
+  converged — an 8³ grid / 60 Å run differs by 7e-4 in what RMC fits) and
+  64 chains staged in `results/rmc_control/null_run/` (git-ignored).
+  With X-ray weighting and no box truncation, the null model sits at
+  Rw(Q) = 0.248 / Rw(r) = 0.40 from the measured data (M2 recorded 0.74 /
+  0.58 neutron-weighted).
 
 ### Found
 - **`verdicts.json` v0.1 is not reproducible from committed code.** The
